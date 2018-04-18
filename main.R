@@ -27,6 +27,7 @@
       packages("fastICA")
       packages("splitstackshape")
       packages("qdap")
+      packages("tidytext")
       packages("tm")
       packages("text2vec")
       packages("data.table")
@@ -123,17 +124,23 @@
            project_submitted_weekday = weekdays(as.Date(project_submitted_date)))
 }
 
+save.image('processed.RData')
+load('processed.RData')
+
 # The NLP segment
 {
-# create separate models across:
-# 1. project title
-# 2. project essay 1
-# 3. project_essay 2+3+4
-# 4.
+  # create separate models across:
+  # 1. project title
+  # 2. project essay 1 + 2+3+4
+  # 3. project_resource_summary
+  # 4. project_categories
+  ################################
+
   # basic features with respect to the nlp feats
   {
     train_test_side %<>%
-      mutate(project_essay = paste0(project_essay_1, project_essay_2, project_essay_3, project_essay_4),
+      mutate(project_essay = paste(project_essay_1, project_essay_2, project_essay_3, project_essay_4, sep = " "),
+             project_categories = paste0(project_subject_categories, " ", project_subject_subcategories),
              pt_len = nchar(project_title),
              pt_essay1_len = nchar(project_essay_1),
              pt_essay2_len = nchar(project_essay_2),
@@ -142,11 +149,11 @@
              pt_res_summary_len = nchar(project_resource_summary),
              pt_essay_len = nchar(project_essay))
 
-    train_test_side_num = train_test_side[, c(9:10, 13:19)]
-    train_test_nlp = train_test_side[, c(1, 6:12)]
+    train_test_side_num = train_test_side[, c(9:10, 14:20)]
+    train_test_nlp = train_test_side[, c(1, 6, 9:13)]
   }
 
-# define the basic functions to be used across the various NLP feats
+  # define the basic functions to be used across the various NLP feats
   {
     all_stopwords = stopwords(kind = "en") %>%
       append(., stop_words$word) %>%
@@ -206,83 +213,87 @@
       dtm_test_tfidf = create_dtm(it_test, vectorizer)
       dtm_test_tfidf <<- fit_transform(dtm_test_tfidf, tfidf)
     }
-
-
   }
-# train_test_side features - the various NLP features that can be added
-{
 
-
-  train_side_1 = train_test_side %>%
-    filter(tt == "train") %>%
-    select(project_title, id, project_is_approved) %>%
-    mutate(project_title = text_feat_treat_fn(project_title))
-
-  train_nlp_1 = sample_frac(tbl = train_side_1, size = 0.75)
-  test_nlp_1 = anti_join(train_side_1, train_nlp_1, by = "id")
-
-  # tokens and vocab of train
+  # train_test_nlp features - the NLP modelling module
   {
-    it_train = itoken(train_nlp_1$project_title,
-                      preprocessor = prep_fun,
-                      tokenizer = tok_fun,
-                      ids = train_nlp_1$id,
-                      progressbar = FALSE)
+    # process the data for nlp
+    train_test_nlp %<>%
+      mutate(project_categories = text_feat_treat_fn(project_categories),
+             project_essay = text_feat_treat_fn(project_essay),
+             project_resource_summary = text_feat_treat_fn(project_resource_summary),
+             project_title = text_feat_treat_fn(project_title))
 
-    vocab = create_vocabulary(it_train, stopwords = all_stopwords, ngram = c(1,3)) %>%
-      prune_vocabulary(., term_count_min = 10, doc_proportion_max = 1, doc_proportion_min = 0.001, vocab_term_max = 200)
-    vectorizer = vocab_vectorizer(vocab)
+    train_side_1 = train_test_side %>%
+      filter(tt == "train") %>%
+      select(project_title, id, project_is_approved) %>%
+      mutate(project_title = text_feat_treat_fn(project_title))
 
-    t1 = Sys.time()
-    dtm_train = create_dtm(it_train, vectorizer)
-    print(difftime(Sys.time(), t1, units = 'sec'))
-    dim(dtm_train)
+    train_nlp_1 = sample_frac(tbl = train_side_1, size = 0.75)
+    test_nlp_1 = anti_join(train_side_1, train_nlp_1, by = "id")
 
-    # define tfidf model
-    tfidf = TfIdf$new()
-    # fit model to train data and transform train data with fitted model
-    dtm_train_tfidf = fit_transform(dtm_train, tfidf)
+    # tokens and vocab of train
+    {
+      it_train = itoken(train_nlp_1$project_title,
+                        preprocessor = prep_fun,
+                        tokenizer = tok_fun,
+                        ids = train_nlp_1$id,
+                        progressbar = FALSE)
+
+      vocab = create_vocabulary(it_train, stopwords = all_stopwords, ngram = c(1,3)) %>%
+        prune_vocabulary(., term_count_min = 10, doc_proportion_max = 1, doc_proportion_min = 0.001, vocab_term_max = 200)
+      vectorizer = vocab_vectorizer(vocab)
+
+      t1 = Sys.time()
+      dtm_train = create_dtm(it_train, vectorizer)
+      print(difftime(Sys.time(), t1, units = 'sec'))
+      dim(dtm_train)
+
+      # define tfidf model
+      tfidf = TfIdf$new()
+      # fit model to train data and transform train data with fitted model
+      dtm_train_tfidf = fit_transform(dtm_train, tfidf)
+    }
+
+    # repeat above for test
+    {
+      it_test = itoken(test_nlp_1$project_title,
+                       preprocessor = prep_fun,
+                       tokenizer = tok_fun,
+                       ids = test_nlp_1$id,
+                       progressbar = FALSE)
+
+      # apply pre-trained tf-idf transformation to test data
+      dtm_test_tfidf = create_dtm(it_test, vectorizer)
+      dtm_test_tfidf = fit_transform(dtm_test_tfidf, tfidf)
+    }
+
+    # training and validating with the 200 feats
+    {
+      NFOLDS = 10
+      t1 = Sys.time()
+      glmnet_classifier = cv.glmnet(x = dtm_train_tfidf, y = train_nlp_1[['project_is_approved']],
+                                    family = 'binomial',
+                                    # L1 penalty
+                                    alpha = 1,
+                                    # interested in the area under ROC curve
+                                    type.measure = "auc",
+                                    # 5-fold cross-validation
+                                    nfolds = NFOLDS,
+                                    # high value is less accurate, but has faster training
+                                    thresh = 1e-5,
+                                    # again lower number of iterations for faster training
+                                    maxit = 1e5)
+      print(difftime(Sys.time(), t1, units = 'sec'))
+
+      plot(glmnet_classifier)
+      print(paste("max AUC =", round(max(glmnet_classifier$cvm), 4)))
+
+      preds = as.numeric(predict(glmnet_classifier, dtm_test_tfidf, type = 'response'))
+
+      glmnet:::auc(test_nlp_1$project_is_approved, preds)
+    }
   }
-
-  # repeat above for test
-  {
-    it_test = itoken(test_nlp_1$project_title,
-                     preprocessor = prep_fun,
-                     tokenizer = tok_fun,
-                     ids = test_nlp_1$id,
-                     progressbar = FALSE)
-
-    # apply pre-trained tf-idf transformation to test data
-    dtm_test_tfidf = create_dtm(it_test, vectorizer)
-    dtm_test_tfidf = fit_transform(dtm_test_tfidf, tfidf)
-  }
-
-  # training and validating with the 200 feats
-  {
-    NFOLDS = 10
-    t1 = Sys.time()
-    glmnet_classifier = cv.glmnet(x = dtm_train_tfidf, y = train_nlp_1[['project_is_approved']],
-                                  family = 'binomial',
-                                  # L1 penalty
-                                  alpha = 1,
-                                  # interested in the area under ROC curve
-                                  type.measure = "auc",
-                                  # 5-fold cross-validation
-                                  nfolds = NFOLDS,
-                                  # high value is less accurate, but has faster training
-                                  thresh = 1e-5,
-                                  # again lower number of iterations for faster training
-                                  maxit = 1e5)
-    print(difftime(Sys.time(), t1, units = 'sec'))
-
-    plot(glmnet_classifier)
-    print(paste("max AUC =", round(max(glmnet_classifier$cvm), 4)))
-
-    preds = as.numeric(predict(glmnet_classifier, dtm_test_tfidf, type = 'response'))
-
-    glmnet:::auc(test_nlp_1$project_is_approved, preds)
-  }
-}
 }
 
 # Feature Engineering
@@ -445,20 +456,20 @@
         cSplit(., splitCols = "project_subject_subcategories", sep = ",", direction = "wide", drop = F, stripWhite = T) %>%
         mutate(count_project_subject_categories = str_count(project_subject_categories, pattern = ",") + 1,
                count_project_subject_subcategories = str_count(project_subject_subcategories, pattern = ",") + 1)
-#
-#       teacher_stats = train_test_main %>%
-#         filter(tt == "train") %>%
-#         group_by(teacher_id) %>%
-#         summarise(teacher_count_of_all_projects = n(),
-#                   teacher_count_of_approved_projects = sum(project_is_approved),
-#                   teacher_prob_of_approval = teacher_count_of_approved_projects/teacher_count_of_all_projects,
-#                   teacher_normalized_score_nologic = teacher_prob_of_approval * teacher_count_of_approved_projects,
-#                   cum_tot_quantity = sum(tot_quantity),
-#                   cum_tot_price = sum(tot_price),
-#                   cum_tot_items = sum(tot_items))
-#
-#       train_test_main %<>%
-#         left_join(., teacher_stats)
+      #
+      #       teacher_stats = train_test_main %>%
+      #         filter(tt == "train") %>%
+      #         group_by(teacher_id) %>%
+      #         summarise(teacher_count_of_all_projects = n(),
+      #                   teacher_count_of_approved_projects = sum(project_is_approved),
+      #                   teacher_prob_of_approval = teacher_count_of_approved_projects/teacher_count_of_all_projects,
+      #                   teacher_normalized_score_nologic = teacher_prob_of_approval * teacher_count_of_approved_projects,
+      #                   cum_tot_quantity = sum(tot_quantity),
+      #                   cum_tot_price = sum(tot_price),
+      #                   cum_tot_items = sum(tot_items))
+      #
+      #       train_test_main %<>%
+      #         left_join(., teacher_stats)
     }
 
     # treating NULLS
