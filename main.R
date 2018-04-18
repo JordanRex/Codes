@@ -164,6 +164,7 @@ load('processed.RData')
     text_feat_treat_fn = function(x) {
       x = as.character(x) %>%
         bracketX %>%
+        # removeWords(all_stopwords) %>%
         # replace_number %>%
         # replace_symbol %>%
         # replace_contraction %>%
@@ -173,7 +174,6 @@ load('processed.RData')
         removeNumbers %>%
         removePunctuation %>%
         stripWhitespace %>%
-        #removeWords(all_stopwords) %>%
         stemDocument
 
       return(x)
@@ -218,11 +218,34 @@ load('processed.RData')
   # train_test_nlp features - the NLP modelling module
   {
     # process the data for nlp
+    t1 = Sys.time()
     train_test_nlp %<>%
       mutate(project_categories = text_feat_treat_fn(project_categories),
              project_essay = text_feat_treat_fn(project_essay),
              project_resource_summary = text_feat_treat_fn(project_resource_summary),
              project_title = text_feat_treat_fn(project_title))
+    print(difftime(Sys.time(), t1, units = 'sec'))
+
+    x = train_test_nlp
+    y = train_test_side[, c(1, 6, 9:13)]
+
+    '%nin%' <- Negate('%in%')
+    z = sapply(x[,1], function(x) {
+      t <- unlist(strsplit(x, " "))
+      t[t %nin% all_stopwords]
+    })
+
+    comma_sep = function(x) {
+      x = strsplit(as.character(x), " ")
+      unlist(lapply(x, paste, collapse = ','))
+    }
+
+    zz = x %>%
+      select(project_essay) %>%
+      .[1:10, , drop = F] %>%
+      rowwise %>%
+      mutate(x = strsplit(project_essay, split = " ")[1],
+             y = paste0(x[x %nin% all_stopwords]), collapse = " ")
 
     train_side_1 = train_test_side %>%
       filter(tt == "train") %>%
