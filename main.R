@@ -108,7 +108,6 @@
 
   train_test_main %<>%
     splitstackshape::cSplit(., splitCols = "project_submitted_datetime", sep = " ", direction = "wide") %>%
-    mutate(project_submitted_datetime_2 = NULL) %>%
     rename(project_submitted_date = project_submitted_datetime_1) %>%
     mutate(project_submitted_date = as.character(project_submitted_date),
            project_year = str_sub(project_submitted_date, 1, 4),
@@ -117,41 +116,102 @@
            project_year_month = pasteTonum(project_year, project_month),
            project_year_day = pasteTonum(project_year, project_day),
            project_month_day = pasteTonum(project_month, project_day),
-           project_year_month_day = as.numeric(gsub(project_submitted_date, pattern = "-", replacement = "")))
+           project_year_month_day = as.numeric(gsub(project_submitted_date, pattern = "-", replacement = "")),
+           project_day_hour = as.numeric(str_sub(project_submitted_datetime_2, 1, 2)),
+           project_daytime_flag = if_else(project_day_hour < 13, 0, 1),
+           project_submitted_datetime_2 = NULL,
+           project_submitted_weekday = weekdays(as.Date(project_submitted_date)))
 }
 
 # The NLP segment
+{
 # create separate models across:
 # 1. project title
 # 2. project essay 1
 # 3. project_essay 2+3+4
 # 4.
+  # basic features with respect to the nlp feats
+  {
+    train_test_side %<>%
+      mutate(project_essay = paste0(project_essay_1, project_essay_2, project_essay_3, project_essay_4),
+             pt_len = nchar(project_title),
+             pt_essay1_len = nchar(project_essay_1),
+             pt_essay2_len = nchar(project_essay_2),
+             pt_essay3_len = nchar(project_essay_3),
+             pt_essay4_len = nchar(project_essay_4),
+             pt_res_summary_len = nchar(project_resource_summary),
+             pt_essay_len = nchar(project_essay))
+
+    train_test_side_num = train_test_side[, c(9:10, 13:19)]
+    train_test_nlp = train_test_side[, c(1, 6:12)]
+  }
+
 # define the basic functions to be used across the various NLP feats
+  {
+    all_stopwords = stopwords(kind = "en") %>%
+      append(., stop_words$word) %>%
+      append(., stopwords::data_stopwords_smart$en) %>%
+      append(., stopwords::data_stopwords_stopwordsiso$en) %>%
+      unique
+
+    text_feat_treat_fn = function(x) {
+      x = as.character(x) %>%
+        bracketX %>%
+        # replace_number %>%
+        # replace_symbol %>%
+        # replace_contraction %>%
+        # replace_ordinal %>%
+        # replace_abbreviation %>%
+        tolower %>%
+        removeNumbers %>%
+        removePunctuation %>%
+        stripWhitespace %>%
+        #removeWords(all_stopwords) %>%
+        stemDocument
+
+      return(x)
+    }
+
+    # define the text2vec function
+    # define preprocessing function and tokenization function
+    prep_fun = tolower
+    tok_fun = word_tokenizer
+
+    text2vec_fn = function(x, y) {
+      it_train = itoken(x$y,
+                        preprocessor = prep_fun,
+                        tokenizer = tok_fun,
+                        ids = x$id,
+                        progressbar = FALSE)
+
+      vocab = create_vocabulary(it_train, stopwords = all_stopwords, ngram = c(1,3)) %>%
+        prune_vocabulary(., term_count_min = 10, doc_proportion_max = 0.75, doc_proportion_min = 0.001, vocab_term_max = 200)
+      vectorizer = vocab_vectorizer(vocab)
+
+      dtm_train = create_dtm(it_train, vectorizer)
+
+      # define tfidf model
+      tfidf = TfIdf$new()
+      # fit model to train data and transform train data with fitted model
+      dtm_train_tfidf <<- fit_transform(dtm_train, tfidf)
+
+      # fit for test now
+      it_test = itoken(x$y,
+                       preprocessor = prep_fun,
+                       tokenizer = tok_fun,
+                       ids = x$id,
+                       progressbar = FALSE)
+
+      # apply pre-trained tf-idf transformation to test data
+      dtm_test_tfidf = create_dtm(it_test, vectorizer)
+      dtm_test_tfidf <<- fit_transform(dtm_test_tfidf, tfidf)
+    }
+
+
+  }
 # train_test_side features - the various NLP features that can be added
 {
-  all_stopwords = stopwords(kind = "en") %>%
-    append(., stop_words$word) %>%
-    append(., stopwords::data_stopwords_smart$en) %>%
-    append(., stopwords::data_stopwords_stopwordsiso$en) %>%
-    unique
 
-  text_feat_treat_fn = function(x) {
-    x = as.character(x) %>%
-      bracketX %>%
-      # replace_number %>%
-      # replace_symbol %>%
-      # replace_contraction %>%
-      # replace_ordinal %>%
-      # replace_abbreviation %>%
-      tolower %>%
-      removeNumbers %>%
-      removePunctuation %>%
-      stripWhitespace %>%
-      #removeWords(all_stopwords) %>%
-      stemDocument
-
-    return(x)
-  }
 
   train_side_1 = train_test_side %>%
     filter(tt == "train") %>%
@@ -163,10 +223,6 @@
 
   # tokens and vocab of train
   {
-    # define preprocessing function and tokenization function
-    prep_fun = tolower
-    tok_fun = word_tokenizer
-
     it_train = itoken(train_nlp_1$project_title,
                       preprocessor = prep_fun,
                       tokenizer = tok_fun,
@@ -227,11 +283,10 @@
     glmnet:::auc(test_nlp_1$project_is_approved, preds)
   }
 }
+}
 
 # Feature Engineering
 {
-
-
   # existing feature transformations/engineering
   {
     # PCA
