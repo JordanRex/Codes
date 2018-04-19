@@ -159,10 +159,25 @@ load('processed.RData')
       append(., stop_words$word) %>%
       append(., stopwords::data_stopwords_smart$en) %>%
       append(., stopwords::data_stopwords_stopwordsiso$en) %>%
-      unique
+      stemDocument(., language = "english") %>%
+      unique %>%
+      tolower %>%
+      gsub(trimws(.), pattern = "[[:punct:]]|[[:digit:]]", replacement = "") %>%
+      .[. != ""] %>%
+      paste0(" ", ., " ")
+
+    all_stopwords_pat_1 = data.frame(words = all_stopwords) %>%
+      .$words %>%
+      .[1:500] %>%
+      paste0(., collapse = "|")
+    all_stopwords_pat_2 = data.frame(words = all_stopwords) %>%
+      .$words %>%
+      .[501:1089] %>%
+      paste0(., collapse = "|")
 
     text_feat_treat_fn = function(x) {
       x = as.character(x) %>%
+        tolower %>%
         bracketX %>%
         # removeWords(all_stopwords) %>%
         # replace_number %>%
@@ -170,11 +185,13 @@ load('processed.RData')
         # replace_contraction %>%
         # replace_ordinal %>%
         # replace_abbreviation %>%
-        tolower %>%
         removeNumbers %>%
         removePunctuation %>%
-        stripWhitespace %>%
-        stemDocument
+        stemDocument %>%
+        gsub(., pattern = all_stopwords_pat_1, replacement = " ", ignore.case = T) %>%
+        gsub(., pattern = all_stopwords_pat_2, replacement = "", ignore.case = T) %>%
+        str_trim %>%
+        str_squish
 
       return(x)
     }
@@ -226,6 +243,7 @@ load('processed.RData')
              project_title = text_feat_treat_fn(project_title))
     print(difftime(Sys.time(), t1, units = 'sec'))
 
+    {
     x = train_test_nlp
     y = train_test_side[, c(1, 6, 9:13)]
 
@@ -240,17 +258,22 @@ load('processed.RData')
       unlist(lapply(x, paste, collapse = ','))
     }
 
+
+
     zz = x %>%
       select(project_essay) %>%
       .[1:10, , drop = F] %>%
       rowwise %>%
-      mutate(x = strsplit(project_essay, split = " ")[1],
-             y = paste0(x[x %nin% all_stopwords]), collapse = " ")
+      mutate(x1 = paste0(str_split(project_essay, pattern = " ", simplify = T), collapse = "|"))
+    ,
+             project_essay = stemDocument(tolower(project_essay), language = "english"))
+             x1 = gsub(project_essay, pattern = all_stopwords_pat_1, replacement = "", ignore.case = T),
+             x1 = gsub(x1, pattern = all_stopwords_pat_2, replacement = "", ignore.case = T))
+    }
 
-    train_side_1 = train_test_side %>%
+    train_side_1 = train_test_nlp %>%
       filter(tt == "train") %>%
-      select(project_title, id, project_is_approved) %>%
-      mutate(project_title = text_feat_treat_fn(project_title))
+      select(project_title, id, project_is_approved)
 
     train_nlp_1 = sample_frac(tbl = train_side_1, size = 0.75)
     test_nlp_1 = anti_join(train_side_1, train_nlp_1, by = "id")
