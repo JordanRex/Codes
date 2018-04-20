@@ -1,2 +1,6 @@
-# DonorsChoose
-codes for the donorschoose competition
+# Codes repository
+
+Competitions:
+DonorsChoose - Kaggle
+PumpItUp - DrivenData
+
