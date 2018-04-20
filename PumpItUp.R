@@ -102,6 +102,10 @@
   test = train_test_encoded %>%
     filter(tt == "test")
 
+  # encode the dep variable as well
+  dep_encoded = CatEncoders::LabelEncoder.fit(train_dep$status_group)
+  train_dep$status_group = CatEncoders::transform(dep_encoded, train_dep$status_group)
+
   train_sample = sample_frac(tbl = train, size = 0.75) %>%
     mutate(tt = NULL)
   train_sample_dep_actual = train_sample %>%
@@ -114,15 +118,15 @@
     select(id, status_group)
 
   train_data_matrix = xgb.DMatrix(data = as.matrix(train_sample),
-                                  label = train_sample_dep_actual$status_group)
+                                  label = as.matrix(train_sample_dep_actual$status_group))
   test_data_matrix = xgb.DMatrix(data = as.matrix(test_sample),
-                                 label = test_sample_dep_actual$status_group)
+                                 label = as.matrix(test_sample_dep_actual$status_group))
 
   numberOfClasses = length(unique(train_dep$status_group))
 
   xgb_params <- list("objective" = "multi:softprob",
                      "eval_metric" = "mlogloss",
-                     "num_class" = numberOfClasses)
+                     "num_class" = numberOfClasses + 1)
   nround = 100 # number of XGBoost rounds
   cv.nfold = 5
 
