@@ -34,6 +34,8 @@
       packages("magrittr")
       packages("dplyr")
     })
+
+  # '%nin%' <- Negate('%in%')
 }
 
 # Reading in the files
@@ -125,7 +127,7 @@
 }
 
 save.image('processed.RData')
-load('processed.RData')
+# load('processed.RData')
 
 # The NLP segment
 {
@@ -149,7 +151,7 @@ load('processed.RData')
              pt_res_summary_len = nchar(project_resource_summary),
              pt_essay_len = nchar(project_essay))
 
-    train_test_side_num = train_test_side[, c(9:10, 14:20)]
+    train_test_side_num = train_test_side[, c(9:11, 14:20)]
     train_test_nlp = train_test_side[, c(1, 6, 9:13)]
   }
 
@@ -159,7 +161,7 @@ load('processed.RData')
       append(., stop_words$word) %>%
       append(., stopwords::data_stopwords_smart$en) %>%
       append(., stopwords::data_stopwords_stopwordsiso$en) %>%
-      stemDocument(., language = "english") %>%
+      stemDocument(language = "english") %>%
       unique %>%
       tolower %>%
       gsub(trimws(.), pattern = "[[:punct:]]|[[:digit:]]", replacement = "") %>%
@@ -179,6 +181,7 @@ load('processed.RData')
       x = as.character(x) %>%
         tolower %>%
         bracketX %>%
+        rm_nchar_words(., n = "1,3", trim = T, clean = T) %>%
         # removeWords(all_stopwords) %>%
         # replace_number %>%
         # replace_symbol %>%
@@ -201,15 +204,15 @@ load('processed.RData')
     prep_fun = tolower
     tok_fun = word_tokenizer
 
-    text2vec_fn = function(x, y) {
-      it_train = itoken(x$y,
+    text2vec_fn = function(x1, x2, y, n) {
+      it_train = itoken(x1[, y],
                         preprocessor = prep_fun,
                         tokenizer = tok_fun,
-                        ids = x$id,
+                        ids = x1$id,
                         progressbar = FALSE)
 
       vocab = create_vocabulary(it_train, stopwords = all_stopwords, ngram = c(1,3)) %>%
-        prune_vocabulary(., term_count_min = 10, doc_proportion_max = 0.75, doc_proportion_min = 0.001, vocab_term_max = 200)
+        prune_vocabulary(., term_count_min = 10, doc_proportion_max = 0.75, doc_proportion_min = 0.001, vocab_term_max = n)
       vectorizer = vocab_vectorizer(vocab)
 
       dtm_train = create_dtm(it_train, vectorizer)
@@ -220,15 +223,17 @@ load('processed.RData')
       dtm_train_tfidf <<- fit_transform(dtm_train, tfidf)
 
       # fit for test now
-      it_test = itoken(x$y,
+      it_test = itoken(x2[, y],
                        preprocessor = prep_fun,
                        tokenizer = tok_fun,
-                       ids = x$id,
+                       ids = x2$id,
                        progressbar = FALSE)
 
       # apply pre-trained tf-idf transformation to test data
       dtm_test_tfidf = create_dtm(it_test, vectorizer)
       dtm_test_tfidf <<- fit_transform(dtm_test_tfidf, tfidf)
+
+      return("all ok")
     }
   }
 
@@ -242,81 +247,31 @@ load('processed.RData')
              project_resource_summary = text_feat_treat_fn(project_resource_summary),
              project_title = text_feat_treat_fn(project_title))
     print(difftime(Sys.time(), t1, units = 'sec'))
+    saveRDS(train_test_nlp, file = 'train_test_nlp.rds')
 
-    {
-    x = train_test_nlp
-    y = train_test_side[, c(1, 6, 9:13)]
+    train_test_nlp = readRDS('train_test_nlp.rds')
 
-    '%nin%' <- Negate('%in%')
-    z = sapply(x[,1], function(x) {
-      t <- unlist(strsplit(x, " "))
-      t[t %nin% all_stopwords]
-    })
+    train_test_nlp %<>%
+      select(-project_essay) %>%
+      mutate(nlp_feat = paste(project_title, project_resource_summary, project_categories, sep = " ")) %>%
+      select(nlp_feat, id, project_is_approved, tt)
 
-    comma_sep = function(x) {
-      x = strsplit(as.character(x), " ")
-      unlist(lapply(x, paste, collapse = ','))
-    }
-
-
-
-    zz = x %>%
-      select(project_essay) %>%
-      .[1:10, , drop = F] %>%
-      rowwise %>%
-      mutate(x1 = paste0(str_split(project_essay, pattern = " ", simplify = T), collapse = "|"))
-    ,
-             project_essay = stemDocument(tolower(project_essay), language = "english"))
-             x1 = gsub(project_essay, pattern = all_stopwords_pat_1, replacement = "", ignore.case = T),
-             x1 = gsub(x1, pattern = all_stopwords_pat_2, replacement = "", ignore.case = T))
-    }
+    nlp_feats = c("project_title", "project_resource_summary", "project_categories")
 
     train_side_1 = train_test_nlp %>%
       filter(tt == "train") %>%
-      select(project_title, id, project_is_approved)
+      select(nlp_feat, id, project_is_approved)
 
+    # testing for the best parameters in glmnet
     train_nlp_1 = sample_frac(tbl = train_side_1, size = 0.75)
     test_nlp_1 = anti_join(train_side_1, train_nlp_1, by = "id")
 
-    # tokens and vocab of train
-    {
-      it_train = itoken(train_nlp_1$project_title,
-                        preprocessor = prep_fun,
-                        tokenizer = tok_fun,
-                        ids = train_nlp_1$id,
-                        progressbar = FALSE)
-
-      vocab = create_vocabulary(it_train, stopwords = all_stopwords, ngram = c(1,3)) %>%
-        prune_vocabulary(., term_count_min = 10, doc_proportion_max = 1, doc_proportion_min = 0.001, vocab_term_max = 200)
-      vectorizer = vocab_vectorizer(vocab)
-
-      t1 = Sys.time()
-      dtm_train = create_dtm(it_train, vectorizer)
-      print(difftime(Sys.time(), t1, units = 'sec'))
-      dim(dtm_train)
-
-      # define tfidf model
-      tfidf = TfIdf$new()
-      # fit model to train data and transform train data with fitted model
-      dtm_train_tfidf = fit_transform(dtm_train, tfidf)
-    }
-
-    # repeat above for test
-    {
-      it_test = itoken(test_nlp_1$project_title,
-                       preprocessor = prep_fun,
-                       tokenizer = tok_fun,
-                       ids = test_nlp_1$id,
-                       progressbar = FALSE)
-
-      # apply pre-trained tf-idf transformation to test data
-      dtm_test_tfidf = create_dtm(it_test, vectorizer)
-      dtm_test_tfidf = fit_transform(dtm_test_tfidf, tfidf)
-    }
+    text2vec_fn(x1 = train_nlp_1, x2 = test_nlp_1, y = 1, n = 200)
 
     # training and validating with the 200 feats
+    # glmnet
     {
-      NFOLDS = 10
+      NFOLDS = 5
       t1 = Sys.time()
       glmnet_classifier = cv.glmnet(x = dtm_train_tfidf, y = train_nlp_1[['project_is_approved']],
                                     family = 'binomial',
@@ -329,7 +284,7 @@ load('processed.RData')
                                     # high value is less accurate, but has faster training
                                     thresh = 1e-5,
                                     # again lower number of iterations for faster training
-                                    maxit = 1e5)
+                                    maxit = 1e7)
       print(difftime(Sys.time(), t1, units = 'sec'))
 
       plot(glmnet_classifier)
@@ -339,8 +294,86 @@ load('processed.RData')
 
       glmnet:::auc(test_nlp_1$project_is_approved, preds)
     }
+    ## tried multiple parameters, ended up with 125~130 features being best
+    ## validating same and getting the list from xgboost
+
+    # xgboost
+    {
+      x = as.matrix(dtm_train_tfidf) %>%
+        data.frame %>%
+        mutate(id = row.names(.)) %>%
+        left_join(., train_test_side_num %>% select(-tt)) %>%
+        left_join(., train_nlp_1[, c("id", "project_is_approved"), drop = F])
+      x_cols = setdiff(colnames(x), c("id", "project_is_approved"))
+
+      y = as.matrix(dtm_test_tfidf) %>%
+        data.frame %>%
+        mutate(id = row.names(.)) %>%
+        left_join(., train_test_side_num %>% select(-tt)) %>%
+        left_join(., train_nlp_1[, c("id", "project_is_approved"), drop = F])
+
+      train_nlp_xgb = xgb.DMatrix(data = as.matrix(x %>% select(-id, -project_is_approved)),
+                                  label = as.numeric(x$project_is_approved))
+      test_nlp_xgb = xgb.DMatrix(data = as.matrix(y %>% select(-id, -project_is_approved)))
+
+      nlp_xgb = xgboost(data = train_nlp_xgb,
+                                         nrounds = 500,
+                                         early_stopping_rounds = 25,
+                                         print_every_n = 50,
+                                         verbose = 1,
+                                         eta = 0.005,
+                                         max_depth = 5,
+                                         objective = "binary:logistic",
+                                         eval_metric = "auc",
+                                         subsample = 0.8,
+                                         colsample_bytree = 0.8)
+
+      xgb_importance = data.table(xgboost::xgb.importance(feature_names = x_cols,
+                                                          model = nlp_xgb))
+      Importance_table = data.frame(Feature = xgb_importance$Feature, Importance = xgb_importance$Gain) %>%
+        mutate(Rank = dense_rank(desc(Importance))) %>%
+        filter(Rank <= 200)
+      nlp_colnames_features = as.vector(Importance_table$Feature)
+    }
+
+    # creating the final nlp train and test set
+    # nlp feats to be taken stored as nlp_colnames_features (128 features alone)
+    {
+      train_test_nlp %<>%
+        select(id, project_is_approved, nlp_feat, tt)
+      train_nlp = train_test_nlp %>%
+        filter(tt == "train") %>%
+        mutate(tt = NULL)
+      test_nlp = train_test_nlp %>%
+        filter(tt == "test") %>%
+        mutate(tt = NULL)
+
+      text2vec_fn(x1 = train_nlp, x2 = test_nlp, y = 3, n = 200)
+
+      train_nlp = as.matrix(dtm_train_tfidf) %>%
+        data.frame %>%
+        mutate(id = row.names(.)) %>%
+        left_join(., train_test_side_num %>% select(-tt)) %>%
+        select(nlp_colnames_features, id, project_is_approved)
+      test_nlp = as.matrix(dtm_test_tfidf) %>%
+        data.frame %>%
+        mutate(id = row.names(.)) %>%
+        left_join(., train_test_side_num %>% select(-tt)) %>%
+        select(nlp_colnames_features, id, project_is_approved)
+
+      save(list = c("train_nlp", "test_nlp"), file = 'nlp_backup.rda')
+      load('nlp_backup.rda')
+    }
   }
+
+  rm(dtm_test_tfidf, dtm_train_tfidf, glmnet_classifier, Importance_table, nlp_xgb,
+     test_nlp_1, test_nlp_xgb, train_nlp_1, train_nlp_xgb, train_side_1, train_test_nlp, train_test_side_final, train_test_side_num, train_test_side,
+     xgb_importance, x, y, preds, all_stopwords, all_stopwords_pat_1, all_stopwords_pat_2)
+  gc()
 }
+
+save.image('after_nlp.RData')
+# load('after_nlp.RData')
 
 # Feature Engineering
 {
@@ -394,8 +427,6 @@ load('processed.RData')
 
       rm(train_num_f, test_num_f, train_ica, train_ica_cols, test_ica_cols, train_test_ica_cols)
     }
-
-    # MCA
 
     rm(train_test_ica, train_test_pca)
 
@@ -539,12 +570,14 @@ load('processed.RData')
       train_test_main %<>%
         select(train_test_main_null_cols_not)
     }
+
+    rm(train_class, train_class_df, train, test, train_test)
   }
 }
 
 # some stuff
 {
-  rm(teacher_stats, train_char_cols, train_num_cols, train_class, train_class_df, train_test)
+  rm(train_char_cols, train_num_cols)
 
   # repeat the class test for dummification for FS
   # flag every column as 1 (numeric) and 0 (character)
@@ -567,7 +600,8 @@ load('processed.RData')
 
   train_dummy_cols = setdiff(train_char_cols, c("tt", "id", "project_submitted_date"))
   train_dummy = dummy.data.frame(data = train, names = train_dummy_cols, sep = "_")
-  train_xgb = xgb.DMatrix(data = data.matrix(train_dummy %>% select(-project_is_approved, -id, -project_submitted_date)), label = data.matrix(as.numeric(train_dummy[,'project_is_approved'])))
+  train_xgb = xgb.DMatrix(data = data.matrix(train_dummy %>% select(-project_is_approved, -id, -project_submitted_date)),
+                          label = data.matrix(as.numeric(train_dummy[,'project_is_approved'])))
 
   xgb_feat_selection_model = xgboost(data = train_xgb,
                                      nrounds = 300,
@@ -587,7 +621,7 @@ load('processed.RData')
   Importance_table = data.frame(Feature = xgb_importance$Feature, Importance = xgb_importance$Gain) %>%
     mutate(Rank = dense_rank(desc(Importance))) %>%
     filter(Rank <= 300)
-  colnames_features_brands = as.vector(Importance_table$Feature)
+  colnames_features_main = as.vector(Importance_table$Feature)
 
 
   ## subset for the required columns alone
@@ -595,16 +629,45 @@ load('processed.RData')
 
   train_x = train_test_main_dummy %>% filter(tt == "train") %>%
     mutate(tt = NULL) %>%
-    select(append(colnames_features_brands, c("project_is_approved", "id")))
+    select(append(colnames_features_main, c("project_is_approved", "id")))
   test_x = train_test_main_dummy %>% filter(tt == "test") %>%
     mutate(tt = NULL) %>%
-    select(append(colnames_features_brands, c("id")))
+    select(append(colnames_features_main, c("id")))
 
-  rm(xgb_feat_selection_model, xgb_importance, train_dummy, train_test_main_dummy, train_class, train_class_df, train, test, train_test_main)
+  rm(xgb_feat_selection_model, xgb_importance, train_dummy, train_test_main_dummy, train_class, train_class_df, train, train_test_main,
+     Importance_table)
 }
 
 save.image('backup.RData')
-load('backup.RData')
+# load('backup.RData')
+
+# combine the main and nlp features for a single dataset as well. 3 models to be created for ensemble
+{
+  train_all_feats = inner_join(train_x, train_nlp)
+  test_all_feats = inner_join(test_x, test_nlp)
+
+  train_nlp = train_nlp
+  test_nlp = test_nlp
+
+  train_non_nlp = train_x
+  test_non_nlp = test_x
+  rm(train_x, test_x)
+
+  View(data.frame(colnames(train_all_feats)))
+
+  train_test_all_feats = bind_rows(train_all_feats %>%
+                                     mutate(tt = "train"),
+                                   test_all_feats %>%
+                                     mutate(tt = "test"))
+  train_test_nlp = bind_rows(train_nlp %>%
+                               mutate(tt = "train"),
+                             test_nlp %>%
+                               mutate(tt = "test"))
+  train_test_non_nlp = bind_rows(train_non_nlp %>%
+                                   mutate(tt = "train"),
+                                 test_non_nlp %>%
+                                   mutate(tt = "test"))
+}
 
 # Model - ranger sample
 {
@@ -616,6 +679,16 @@ load('backup.RData')
     return(x)
   }
   train_test_main %<>% mutate_all(factorFun)
+
+
+  # ranger function
+  {
+    ranger_model_fn = function(x1, x2) {
+
+    }
+  }
+
+  # 3 sets of ranger
 
   train = train_test_main %>% filter(tt == "train") %>% select(-tt, -id) %>%
     mutate(project_is_approved = as.character(project_is_approved))
