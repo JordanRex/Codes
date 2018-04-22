@@ -317,16 +317,16 @@ save.image('processed.RData')
       test_nlp_xgb = xgb.DMatrix(data = as.matrix(y %>% select(-id, -project_is_approved)))
 
       nlp_xgb = xgboost(data = train_nlp_xgb,
-                                         nrounds = 500,
-                                         early_stopping_rounds = 25,
-                                         print_every_n = 50,
-                                         verbose = 1,
-                                         eta = 0.005,
-                                         max_depth = 5,
-                                         objective = "binary:logistic",
-                                         eval_metric = "auc",
-                                         subsample = 0.8,
-                                         colsample_bytree = 0.8)
+                        nrounds = 500,
+                        early_stopping_rounds = 25,
+                        print_every_n = 50,
+                        verbose = 1,
+                        eta = 0.005,
+                        max_depth = 5,
+                        objective = "binary:logistic",
+                        eval_metric = "auc",
+                        subsample = 0.8,
+                        colsample_bytree = 0.8)
 
       xgb_importance = data.table(xgboost::xgb.importance(feature_names = x_cols,
                                                           model = nlp_xgb))
@@ -638,9 +638,6 @@ save.image('after_nlp.RData')
      Importance_table)
 }
 
-save.image('backup.RData')
-# load('backup.RData')
-
 # combine the main and nlp features for a single dataset as well. 3 models to be created for ensemble
 {
   train_all_feats = inner_join(train_x, train_nlp)
@@ -667,105 +664,210 @@ save.image('backup.RData')
                                    mutate(tt = "train"),
                                  test_non_nlp %>%
                                    mutate(tt = "test"))
-}
 
-# Model - ranger sample
-{
-  # function to make factors from characters
-  factorFun = function(x) {
-    if (n_distinct(x) < 53) {
-      x = as.factor(x)
-    }
+  # treat NAs in the datasets
+  num_cols_nas_fix_fn = function(x) {
+    x = as.numeric(x)
+    x[which(is.na(x))] = mean(x, na.rm = T)
     return(x)
   }
-  train_test_main %<>% mutate_all(factorFun)
 
-
-  # ranger function
-  {
-    ranger_model_fn = function(x1, x2) {
-
-    }
-  }
-
-  # 3 sets of ranger
-
-  train = train_test_main %>% filter(tt == "train") %>% select(-tt, -id) %>%
-    mutate(project_is_approved = as.character(project_is_approved))
-  test = train_test_main %>% filter(tt == "test") %>% select(-tt, -project_is_approved, -id)
-  test_ids = train_test_main %>% filter(tt == "test") %>% select(id)
-
-  ranger_model = ranger(formula = project_is_approved ~ .,
-                        data = train,
-                        num.trees = 200,
-                        mtry = 4,
-                        importance = "impurity",
-                        probability = T,
-                        splitrule = "gini",
-                        respect.unordered.factors = T,
-                        verbose = T)
-
-  output = predict(ranger_model, test)$predictions %>%
-    .[, "1"]
-  output %<>% cbind(test_ids, project_is_approved = .)
-
-  write.csv(output, 'output.csv', row.names = F)
+  train_test_all_feats %<>%
+    mutate_if(is.numeric, num_cols_nas_fix_fn)
+  train_test_nlp %<>%
+    mutate_if(is.numeric, num_cols_nas_fix_fn)
+  train_test_non_nlp %<>%
+    mutate_if(is.numeric, num_cols_nas_fix_fn)
 }
 
-# Model - xgboost (first time to get the best parameters)
-{
-  train_x = train_x
+save.image('backup.RData')
+# load('backup.RData')
 
-  ## 75% of the sample size
-  smp_size = floor(0.7 * nrow(train_x))
+# Model - xgboost (3 models)
+{
+  rm(train_all_feats, test_all_feats, train_nlp, test_nlp, train_non_nlp, test_non_nlp)
+  gc()
+  # making a sample train sets for the 3 datasets
+  train1 = train_test_all_feats %>%
+    filter(tt == "train")
+  train2 = train_test_nlp %>%
+    filter(tt == "train")
+  train3 = train_test_non_nlp %>%
+    filter(tt == "train")
+
+  ## 7% of the sample size
+  smp_size = floor(0.7 * nrow(train1))
 
   ## set the seed to make your partition reproductible
   set.seed(123)
-  train_ind = sample(seq_len(nrow(train_x)), size = smp_size)
+  train_ind = sample(seq_len(nrow(train1)), size = smp_size)
 
-  train <- train_x[train_ind, ]
-  test <- train_x[-train_ind, ]
+  # set 1
+  train11 <- train1[train_ind, ] %>% mutate(tt = "train")
+  test11 <- train1[-train_ind, ] %>% mutate(tt = "test")
+  train_test_11 = bind_rows(train11, test11)
+  test_Actuals = test11 %>% select(id, project_is_approved)
 
-  train_xgb = xgb.DMatrix(data = train %>% select(-project_is_approved, -id) %>% data.matrix,
-                          label = as.numeric(train$project_is_approved))
-  test_xgb = xgb.DMatrix(data = test %>% select(-project_is_approved, -id) %>% data.matrix)
+  # set 2
+  train21 <- train2[train_ind, ] %>% mutate(tt = "train")
+  test21 <- train2[-train_ind, ] %>% mutate(tt = "test")
+  train_test_21 = bind_rows(train21, test21)
 
-  # test_xgb = train_test_full %>%
-  #   filter(tt == "test") %>%
-  #   select(-tt, -id, -project_is_approved, -project_submitted_date) %>%
-  #   data.matrix
-  test_ids = test %>% select(id)
+  # set 3
+  train31 <- train3[train_ind, ] %>% mutate(tt = "train")
+  test31 <- train3[-train_ind, ] %>% mutate(tt = "test")
+  train_test_31 = bind_rows(train31, test31)
 
-  xgb_grid = expand.grid(nrounds = c(500, 1000, 1500),
-                         eta = c(0.005, 0.01, 0.1),
-                         max_depth = c(5, 10, 15, 20)) %>%
-    mutate(model = 1:36) %>%
-    mutate_all(as.numeric)
-  output_grid = data.frame(model = 0, accuracy = 0)
+  rm(train11, test11, train21, test21, train31, test31)
+  rm(train_xgb)
+  gc()
 
-  for (i in xgb_grid$model) {
+  ## the 3 datasets ##
+  # train_test_all_feats
+  # train_test_nlp
+  # train_test_non_nlp
+
+  # xgboost function
+  xgb_model_fn = function(x, y) {
+    temp = x
+
+    temp_train = temp %>%
+      filter(tt == "train") %>%
+      select(-id, -tt)
+
+    temp_test = temp %>%
+      filter(tt == "test") %>%
+      select(-id, -tt)
+
+    test_ids = temp %>%
+      filter(tt == "test") %>%
+      .$id
+
+    train_xgb = xgb.DMatrix(data = temp_train %>% select(-project_is_approved,) %>% data.matrix,
+                            label = as.numeric(temp_train$project_is_approved))
+    test_xgb = xgb.DMatrix(data = temp_test %>% select(-project_is_approved) %>% data.matrix)
+
     xgb_model = xgboost(data = train_xgb,
-                        nrounds = xgb_grid[i, "nrounds"],
+                        nrounds = 1000,
                         early_stopping_rounds = 25,
                         print_every_n = 50,
                         verbose = 1,
-                        eta = xgb_grid[i, "eta"],
-                        max_depth = xgb_grid[i, "max_depth"],
+                        eta = 0.01,
+                        max_depth = 3,
                         objective = "binary:logistic",
                         eval_metric = "auc",
-                        subsample = 0.6,
-                        colsample_bytree = 0.6)
+                        subsample = 0.8,
+                        colsample_bytree = 0.8,
+                        base_score = 0.49)
 
-    output = cbind(test_ids, project_is_approved = predict(xgb_model, test_xgb)) %>%
-      left_join(., test %>% select(id, act = project_is_approved)) %>%
-      mutate(pred = if_else(project_is_approved > 0.5, 1, 0),
-             acc = if_else(act == pred, 1, 0))
+    output = data.frame(id = test_ids, project_is_approved = as.numeric(predict(xgb_model, test_xgb))) %>%
+      mutate(project_is_approved = if_else(project_is_approved > 0.95, 1,
+                                           if_else(project_is_approved < 0.05, 0, project_is_approved)))
 
-    output_grid[i, "model"] = i
-    output_grid[i, "accuracy"] = sum(output$acc)/nrow(output)
+    assign(paste0("output_", y), value = output, envir = .GlobalEnv)
+    write.csv(output, paste0('output_', y, '.csv'), row.names = F)
 
-    gc()
+    return("seems fine")
   }
 
+  # xgb_model_fn(train_test_all_feats, 1)
+  # xgb_model_fn(train_test_nlp, 2)
+  # xgb_model_fn(train_test_non_nlp, 3)
+
+  xgb_model_fn(train_test_11, 1)
+  xgb_model_fn(train_test_21, 2)
+  xgb_model_fn(train_test_31, 3)
+
+  output = inner_join(output_1 %>% rename(project_is_approved_1 = project_is_approved),
+                      output_2 %>% rename(project_is_approved_2 = project_is_approved), by = "id") %>%
+    inner_join(., output_3 %>% rename(project_is_approved_3 = project_is_approved), by = "id") %>%
+    mutate(project_is_approved_final = 0.5*project_is_approved_1 + 0.2*project_is_approved_2 + 0.3*project_is_approved_3,
+           project_is_approved_avg = (project_is_approved_1 + project_is_approved_2 + project_is_approved_3)/3,
+           project_is_approved_min = pmin(project_is_approved_1, project_is_approved_2, project_is_approved_3),
+           project_is_approved_max = pmax(project_is_approved_1, project_is_approved_2, project_is_approved_3)) %>%
+    left_join(., test_Actuals %>% select(id, project_is_approved), by = "id")
   write.csv(output, 'output.csv', row.names = F)
+  gc()
+
+  output_act = output$project_is_approved
+
+  auc_fn = function(x) {
+    x = as.numeric(x)
+    y = pROC::auc(output_act, x)
+    return(y)
+  }
+  auc_score = output %>% select(-id, -project_is_approved) %>% summarise_all(auc_fn)
+
+  # output
+  output %<>% left_join(., train_test_all_feats %>%
+                          select(colnames_features_main[1:50], id))
+
+  # ensemble 1 - grid search to get best parameters
+  {
+    # # segment to get the best parameters (one-time)
+    {
+      # ## 70% of the sample size
+      # smp_size = floor(0.7 * nrow(output))
+      #
+      # ## set the seed to make your partition reproductible
+      # set.seed(123)
+      # train_ind = sample(seq_len(nrow(output)), size = smp_size)
+      #
+      # # set 1
+      # output_train <- output[train_ind, ]
+      # output_test <- output[-train_ind, ]
+      # output_act = output_test$project_is_approved
+      #
+      # xgb_output_train = xgb.DMatrix(data = as.matrix(output_train %>% select(-id, -project_is_approved)),
+      #                                label = as.numeric(output_train$project_is_approved))
+      # xgb_output_test = xgb.DMatrix(data = as.matrix(output_test %>% select(-id, -project_is_approved)))
+
+      #   xgb_grid = expand.grid(nrounds = c(1000),
+      #                          eta = c(0.005, 0.01),
+      #                          maxdepth = c(3, 5),
+      #                          basescore = c(0.49, 0.5, 0.51),
+      #                          auc = 0)
+      #
+      #   for (i in 1:nrow(xgb_grid)) {
+      #     xgb_output_model = xgboost(data = xgb_output_train,
+      #                                nrounds = as.numeric(xgb_grid[i, "nrounds", drop = T]),
+      #                                early_stopping_rounds = 25,
+      #                                print_every_n = 50,
+      #                                verbose = 1,
+      #                                eta = as.numeric(xgb_grid[i, "eta", drop = T]),
+      #                                max_depth = as.numeric(xgb_grid[i, "maxdepth", drop = T]),
+      #                                objective = "binary:logistic",
+      #                                eval_metric = "auc",
+      #                                subsample = 0.8,
+      #                                colsample_bytree = 0.8,
+      #                                base_score = as.numeric(xgb_grid[i, "basescore", drop = T]))
+      #
+      #     sample_output = data.frame(id = output_test$id, project_is_approved = as.numeric(predict(xgb_output_model, xgb_output_test))) %>%
+      #       left_join(., output_test %>% select(id, act = project_is_approved))
+      #     xgb_grid[i, "auc"] = sample_output %>% select(-id, -act) %>% summarise_all(auc_fn)
+      #
+      #     print("model running is ", i)
+      #   }
+      #
+      #   xgb_grid_params = xgb_grid %>%
+      #     mutate(rank = dense_rank(desc(auc))) %>%
+      #     filter(rank < 2)
+      #
+    }
+
+    # we ended up getting nrounds = 1000, eta = 0.01, maxdepth = 3, base_score = 0.49
+    # will use these parameters for final ensemble
+
+  }
+
+  # final ensemble
+  {
+    rm(list = setdiff(ls(), c("train_test_all_feats", train_test_nlp, train_test_non_nlp, xgb_grid_params, colnames_features_main,
+                              packages, xgb_model_fn)))
+    gc()
+
+
+  }
+
+  # write.csv(output, 'output.csv', row.names = F)
 }
