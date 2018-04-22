@@ -1,6 +1,5 @@
 # Codes repository
 
-Competitions:
-DonorsChoose - Kaggle
-PumpItUp - DrivenData
-
+Competitions:  
+  DonorsChoose - Kaggle  
+  PumpItUp - DrivenData  
