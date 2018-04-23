@@ -1,0 +1,146 @@
+# initiate h2o #
+h2o.init(nthreads = 2, max_mem_size="4G")
+h2o.removeAll()    # clean slate - just in case the cluster was already running
+h2o.no_progress()  # Don't show progress bars in RMarkdown output
+
+# For binary classification, response should be a factor
+DstTrainTest$project_is_approved <- as.factor(DstTrainTest$project_is_approved)
+levels(DstTrainTest$project_is_approved) = make.names(unique(DstTrainTest$project_is_approved))
+
+# convert to h2o frame 
+h2o_TrainAux = as.h2o(DstTrainTest)
+
+# define the splits
+h2o_splits <- h2o.splitFrame(h2o_TrainAux, 0.7, seed=1234)
+h2o_DstTrain  <- h2o.assign(h2o_splits[[1]], "train.hex") # 70%
+h2o_DstTest  <- h2o.assign(h2o_splits[[2]], "test.hex") # 30%
+
+# Identify predictors and response
+response <- "project_is_approved"
+predictors <- setdiff(names(h2o_DstTrain), response)
+
+# Number of CV folds (to generate level-one data for stacking)
+cvfolds <- 5
+
+get_auc <- function(x) h2o.auc(h2o.performance(h2o.getModel(x), newdata = h2o_DstTest))
+
+# Train & Cross-validate a GBM
+my_gbm <- h2o.gbm(x = predictors,
+                  y = response,
+                  training_frame = h2o_DstTrain,
+                  distribution = "bernoulli",
+                  max_depth = 3,
+                  min_rows = 2,
+                  learn_rate = 0.2,
+                  nfolds = cvfolds,
+                  fold_assignment = "Stratified",
+                  keep_cross_validation_predictions = TRUE,
+                  seed = 1,
+                  stopping_metric = "AUC",
+                  balance_classes = T,
+                  sample_rate = 0.8,
+                  col_sample_rate = 0.8,
+                  calibrate_model = T,
+                  verbose = T)
+# Measure auc
+get_auc(my_gbm@model_id)
+
+# Train & Cross-validate a RF
+my_rf <- h2o.randomForest(x = predictors,
+                          y = response,
+                          training_frame = h2o_DstTrain,
+                          nfolds = cvfolds,
+                          fold_assignment = "Stratified",
+                          keep_cross_validation_predictions = TRUE,
+                          seed = 1)
+# Measure auc
+get_auc(my_rf@model_id)
+
+# Train & Cross-validate a DNN
+my_dl <- h2o.deeplearning(x = predictors,
+                          y = response,
+                          training_frame = h2o_DstTrain,
+                          l1 = 0.001,
+                          l2 = 0.001,
+                          hidden = c(200, 200, 200),
+                          nfolds = cvfolds,
+                          fold_assignment = "Stratified",
+                          keep_cross_validation_predictions = TRUE,
+                          seed = 1)
+# Measure auc
+get_auc(my_dl@model_id)
+
+# Train & Cross-validate a (shallow) XGB-GBM
+my_xgb1 <- h2o.xgboost(x = predictors,
+                       y = response,
+                       training_frame = h2o_DstTrain,
+                       distribution = "bernoulli",
+                       ntrees = 50,
+                       max_depth = 3,
+                       min_rows = 2,
+                       learn_rate = 0.2,
+                       nfolds = cvfolds,
+                       fold_assignment = "Stratified",
+                       keep_cross_validation_predictions = TRUE,
+                       seed = 1)
+# Measure auc
+get_auc(my_xgb1@model_id)
+
+# Train & Cross-validate another (deeper) XGB-GBM
+my_xgb2 <- h2o.xgboost(x = predictors,
+                       y = response,
+                       training_frame = h2o_DstTrain,
+                       distribution = "bernoulli",
+                       ntrees = 50,
+                       max_depth = 8,
+                       min_rows = 1,
+                       learn_rate = 0.1,
+                       sample_rate = 0.7,
+                       col_sample_rate = 0.9,
+                       nfolds = cvfolds,
+                       fold_assignment = "Stratified",
+                       keep_cross_validation_predictions = TRUE,
+                       seed = 1)
+# Measure auc
+get_auc(my_xgb2@model_id)
+
+# Create a Stacked Ensemble
+# To maximize predictive power, will create an H2O Stacked Ensemble from the models we created above and print the performance gain the ensemble has over the best base model.
+# Train a stacked ensemble using the H2O and XGBoost models from above
+base_models <- list(my_gbm@model_id, my_rf@model_id, my_dl@model_id,  
+                    my_xgb1@model_id, my_xgb2@model_id)
+
+ensemble <- h2o.stackedEnsemble(x = predictors,
+                                y = response,
+                                training_frame = h2o_DstTrain,
+                                base_models = base_models)
+# Eval ensemble performance on a test set
+perf <- h2o.performance(ensemble, newdata = h2o_DstTest)
+
+# Compare to base learner performance on the test set
+baselearner_aucs <- sapply(base_models, get_auc)
+baselearner_best_auc_test <- max(baselearner_aucs)
+ensemble_auc_test <- h2o.auc(perf)
+
+# Compare the test set performance of the best base model to the ensemble.
+print(sprintf("Best Base-learner Test AUC:  %s", baselearner_best_auc_test))
+print(sprintf("Ensemble Test AUC:  %s", ensemble_auc_test))
+
+# convert to h2o frame 
+#h2o_FinalTest = as.h2o(DstTest[,ToDropTest])
+h2o_FinalTest = as.h2o(toNumeric(DstTest[,ToDropTest]))
+
+# predict with the model
+predictFinal <- h2o.predict(ensemble, h2o_FinalTest)
+
+# convert H2O format into data frame and save as csv
+predictFinal.df <- as.data.frame(predictFinal)
+
+# create a csv file for submittion
+Result <- data.frame(id = DstTest$id, project_is_approved = predictFinal.df$X0)
+head(Result,n=5L)
+# write the submition file
+write.csv(Result,file = "Result.csv",row.names = FALSE)
+
+# shut down virtual H2O cluster
+h2o.shutdown(prompt = FALSE)
