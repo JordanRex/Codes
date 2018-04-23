@@ -33,11 +33,11 @@
 
 # Reading in the files
 {
-  train_feats = read.csv('train_feats.csv', header = T, stringsAsFactors = F, na.strings = c("", " ", "?", "NA"))
-  test_feats = read.csv('test_feats.csv', header = T, stringsAsFactors = F, na.strings = c("", " ", "?", "NA"))
+  train_feats = fread('train_feats.csv', header = T, stringsAsFactors = F, na.strings = c("", " ", "?", "NA")) %>% data.frame
+  test_feats = fread('test_feats.csv', header = T, stringsAsFactors = F, na.strings = c("", " ", "?", "NA")) %>% data.frame
 
-  train_dep = read.csv('train_dep.csv', header = T, stringsAsFactors = F, na.strings = c("", " ", "?", "NA"))
-  sample_sub = read.csv('SubmissionFormat.csv')
+  train_dep = fread('train_dep.csv', header = T, stringsAsFactors = F, na.strings = c("", " ", "?", "NA")) %>% data.frame
+  sample_sub = fread('SubmissionFormat.csv') %>% data.frame
 }
 
 # Processing
@@ -62,6 +62,8 @@
   }
 
   train_feats %<>% mutate_if(.predicate = colnames(.) %in% miss_cols,
+                             .funs = fn_miss_treatment_categ)
+  test_feats %<>% mutate_if(.predicate = colnames(.) %in% miss_cols,
                              .funs = fn_miss_treatment_categ)
 
   # label encode and store all character columns for immediate modelling
@@ -109,17 +111,20 @@
   train_dep$status_group = CatEncoders::transform(dep_encoded, train_dep$status_group) - 1
 
   train_sample = sample_frac(tbl = train, size = 0.7) %>%
-    select(-tt, -id)
+    select(-tt)
   train_sample_dep_actual = train_sample %>%
     left_join(., train_dep) %>%
     select(id, status_group)
   test_sample = anti_join(train, train_sample, by = "id") %>%
-    select(-tt, -id)
+    select(-tt)
   test_sample_dep_actual = test_sample %>%
     left_join(., train_dep) %>%
     select(id, status_group)
   test_ids = test_sample_dep_actual %>%
     .$id
+
+  train_sample %<>% select(-id)
+  test_sample %<>% select(-id)
 
   train_data_matrix = xgb.DMatrix(data = as.matrix(train_sample),
                                   label = as.matrix(train_sample_dep_actual$status_group))
