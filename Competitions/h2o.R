@@ -29,7 +29,7 @@ library(h2o)
 #### Start H2O
 #Start up a 1-node H2O server on your local machine, and allow it to use all CPU cores and up to 2GB of memory:
 
-h2o.init(nthreads = 2, max_mem_size = "4G")
+h2o.init(nthreads = 2, max_mem_size = "6G")
 h2o.removeAll() ## clean slate - just in case the cluster was already running
 
 output = fread('output.csv')
@@ -92,16 +92,5 @@ path <- h2o.saveModel(m_cont,
 
 m_loaded <- h2o.loadModel(path)
 
-dlmodel <- h2o.deeplearning(
-  x=predictors,
-  y=response,
-  training_frame=train,
-  hidden=c(10,10),
-  epochs=1,
-  nfolds=5,
-  fold_assignment="Modulo" # can be "AUTO", "Modulo", "Random" or "Stratified"
-)
-
-plot(h2o.performance(dlmodel)) ## display ROC curve
 #### All done, shutdown H2O
 h2o.shutdown(prompt=FALSE)

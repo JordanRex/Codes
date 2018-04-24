@@ -126,8 +126,8 @@
            project_submitted_weekday = weekdays(as.Date(project_submitted_date)))
 }
 
-save.image('processed.RData')
-# load('processed.RData')
+#save.image('processed.RData')
+#load('processed.RData')
 
 # The NLP segment
 {
@@ -249,7 +249,7 @@ save.image('processed.RData')
     print(difftime(Sys.time(), t1, units = 'sec'))
     saveRDS(train_test_nlp, file = 'train_test_nlp.rds')
 
-    train_test_nlp = readRDS('train_test_nlp.rds')
+    #train_test_nlp = readRDS('train_test_nlp.rds')
 
     train_test_nlp %<>%
       select(-project_essay) %>%
@@ -367,13 +367,13 @@ save.image('processed.RData')
   }
 
   rm(dtm_test_tfidf, dtm_train_tfidf, glmnet_classifier, Importance_table, nlp_xgb,
-     test_nlp_1, test_nlp_xgb, train_nlp_1, train_nlp_xgb, train_side_1, train_test_nlp, train_test_side_final, train_test_side_num, train_test_side,
+     test_nlp_1, test_nlp_xgb, train_nlp_1, train_nlp_xgb, train_side_1, train_test_nlp, train_test_side_num, train_test_side,
      xgb_importance, x, y, preds, all_stopwords, all_stopwords_pat_1, all_stopwords_pat_2)
   gc()
 }
 
-save.image('after_nlp.RData')
-# load('after_nlp.RData')
+#save.image('after_nlp.RData')
+#load('after_nlp.RData')
 
 # Feature Engineering
 {
@@ -469,15 +469,17 @@ save.image('after_nlp.RData')
 
           temp_cols = c(temp_col,
                         paste0(temp_col, "_mean"),
-                        paste0(temp_col, "_sd"))
+                        paste0(temp_col, "_sd"),
+                        paste0(temp_col, "_count"))
 
           temp = train_char_data[, i, drop = F] %>%
             cbind(., train_num_data) %>%
             group_by_at(vars(-matches("project_is_approved"))) %>%
             mutate(mean = mean(project_is_approved),
-                   sd = sd(project_is_approved)) %>%
+                   sd = sd(project_is_approved),
+                   count = n()) %>%
             ungroup %>%
-            select(temp_col, mean, sd) %>%
+            select(temp_col, mean, sd, count) %>%
             set_colnames(temp_cols) %>%
             distinct
 
@@ -533,20 +535,21 @@ save.image('after_nlp.RData')
         cSplit(., splitCols = "project_subject_subcategories", sep = ",", direction = "wide", drop = F, stripWhite = T) %>%
         mutate(count_project_subject_categories = str_count(project_subject_categories, pattern = ",") + 1,
                count_project_subject_subcategories = str_count(project_subject_subcategories, pattern = ",") + 1)
-      #
-      #       teacher_stats = train_test_main %>%
-      #         filter(tt == "train") %>%
-      #         group_by(teacher_id) %>%
-      #         summarise(teacher_count_of_all_projects = n(),
-      #                   teacher_count_of_approved_projects = sum(project_is_approved),
-      #                   teacher_prob_of_approval = teacher_count_of_approved_projects/teacher_count_of_all_projects,
-      #                   teacher_normalized_score_nologic = teacher_prob_of_approval * teacher_count_of_approved_projects,
-      #                   cum_tot_quantity = sum(tot_quantity),
-      #                   cum_tot_price = sum(tot_price),
-      #                   cum_tot_items = sum(tot_items))
-      #
-      #       train_test_main %<>%
-      #         left_join(., teacher_stats)
+
+            # teacher_stats = train_test_main %>%
+            #   filter(tt == "train") %>%
+            #   group_by(teacher_id) %>%
+            #   summarise(teacher_count_of_all_projects = n(),
+            #             teacher_count_of_approved_projects = sum(project_is_approved),
+            #             teacher_prob_of_approval = n()/sum(project_is_approved),
+            #             teacher_normalized_score_nologic = teacher_prob_of_approval * teacher_count_of_approved_projects,
+            #             cum_tot_quantity = sum(tot_quantity),
+            #             cum_tot_price = sum(tot_price),
+            #             cum_tot_items = sum(tot_items))
+            #
+            # train_test_main %<>%
+            #   left_join(., teacher_stats) %>%
+            #   mutate(teacher_prob_of_approval = if_else(is.na(teacher_prob_of_approval), 0.5, teacher_prob_of_approval))
     }
 
     # treating NULLS
@@ -604,23 +607,23 @@ save.image('after_nlp.RData')
                           label = data.matrix(as.numeric(train_dummy[,'project_is_approved'])))
 
   xgb_feat_selection_model = xgboost(data = train_xgb,
-                                     nrounds = 300,
+                                     nrounds = 400,
                                      early_stopping_rounds = 25,
                                      print_every_n = 50,
                                      verbose = 1,
                                      eta = 0.01,
-                                     max_depth = 10,
+                                     max_depth = 5,
                                      objective = "binary:logistic",
                                      eval_metric = "auc",
-                                     subsample = 0.5,
-                                     colsample_bytree = 0.5)
+                                     subsample = 0.3,
+                                     colsample_bytree = 0.3)
 
   xgb_importance = data.table(xgboost::xgb.importance(feature_names = setdiff(colnames(train_dummy), c("project_is_approved", "id", "project_submitted_date")),
                                                       model = xgb_feat_selection_model))
 
   Importance_table = data.frame(Feature = xgb_importance$Feature, Importance = xgb_importance$Gain) %>%
     mutate(Rank = dense_rank(desc(Importance))) %>%
-    filter(Rank <= 300)
+    filter(Rank <= 500)
   colnames_features_main = as.vector(Importance_table$Feature)
 
 
@@ -634,8 +637,7 @@ save.image('after_nlp.RData')
     mutate(tt = NULL) %>%
     select(append(colnames_features_main, c("id")))
 
-  rm(xgb_feat_selection_model, xgb_importance, train_dummy, train_test_main_dummy, train_class, train_class_df, train, train_test_main,
-     Importance_table)
+  rm(xgb_feat_selection_model, xgb_importance, train_dummy, train_test_main_dummy, train_class, train_class_df, train, train_test_main)
 }
 
 # combine the main and nlp features for a single dataset as well. 3 models to be created for ensemble
@@ -680,8 +682,8 @@ save.image('after_nlp.RData')
     mutate_if(is.numeric, num_cols_nas_fix_fn)
 }
 
-save.image('backup.RData')
-load('backup.RData')
+#save.image('backup.RData')
+#load('backup.RData')
 rm(train_all_feats, test_all_feats, train_nlp, test_nlp, train_non_nlp, test_non_nlp)
 
 # Model - xgboost (3 models)
@@ -710,22 +712,27 @@ rm(train_all_feats, test_all_feats, train_nlp, test_nlp, train_non_nlp, test_non
       filter(tt == "test") %>%
       .$id
 
+    temp_train_weights = temp_train %>%
+      mutate(weight = if_else(project_is_approved == 0, 3, 1)) %>%
+      .$weight
+
     train_xgb = xgb.DMatrix(data = temp_train %>% select(-project_is_approved,) %>% data.matrix,
                             label = as.numeric(temp_train$project_is_approved))
     test_xgb = xgb.DMatrix(data = temp_test %>% select(-project_is_approved) %>% data.matrix)
 
-    xgb_model = xgboost(data = train_xgb,
+    xgb_model = xgb.train(data = train_xgb,
                         nrounds = 1000,
-                        early_stopping_rounds = 25,
                         print_every_n = 50,
                         verbose = 1,
                         eta = 0.01,
                         max_depth = 4,
                         objective = "binary:logistic",
                         eval_metric = "auc",
-                        subsample = 0.6,
-                        colsample_bytree = 0.6,
-                        base_score = 0.49)
+                        subsample = 0.5,
+                        colsample_bytree = 0.4,
+                        base_score = 0.49,
+                        weight = temp_train_weights,
+                        verbose = T)
 
     output = data.frame(id = test_ids, project_is_approved = as.numeric(predict(xgb_model, test_xgb))) %>%
       mutate(project_is_approved = if_else(project_is_approved > 0.95, 1,
@@ -743,16 +750,216 @@ rm(train_all_feats, test_all_feats, train_nlp, test_nlp, train_non_nlp, test_non
 
 # Finals
 {
-write.csv(train_test_all_feats, 'final_ads.csv', row.names = F)
+  gc()
+fwrite(train_test_all_feats, 'final_ads.csv')
 fwrite(train_test_all_feats %>%
-            filter(tt == "train") %>%
-            select(-id, -tt) %>%
-         mutate(project_is_approved = as.character(project_is_approved)),
-          'final_train.csv', showProgress = T)
+         filter(tt == "train") %>%
+         select(-id, -tt) %>%
+         mutate(project_is_approved = as.character(project_is_approved)) %>%
+         select(project_is_approved, everything()),
+        'final_train.csv', showProgress = T)
 fwrite(train_test_all_feats %>%
          filter(tt == "test") %>%
-         select(-id, -tt, -project_is_approved),
+         select(-id, -tt, -project_is_approved) %>%
+         select(project_is_approved, everything()),
        'final_test.csv', showProgress = T)
 }
 
 # h2o deep learning
+{
+  # Initialization
+  {
+    gc()
+    cat("\014")
+    rm(list = setdiff(ls(), c("output", "train_test_all_feats")))
+
+    packages = function(x) {
+      x = as.character(match.call()[[2]])
+      if (!require(x,character.only = TRUE)) {
+        install.packages(pkgs = x, repos = "http://cran.r-project.org", dependencies = T, quiet = T)
+        require(x, character.only = TRUE)
+      }
+    }
+
+    suppressMessages(
+      {
+        packages("data.table")
+        packages("magrittr")
+        packages("dplyr")
+      })
+
+    # '%nin%' <- Negate('%in%')
+  }
+
+  # Load the H2O R package:
+  library(h2o)
+
+  #### Start H2O
+  #Start up a 1-node H2O server on your local machine, and allow it to use all CPU cores and up to 4GB of memory:
+
+  h2o.init(nthreads = 3, max_mem_size = "6G")
+  h2o.removeAll() ## clean slate - just in case the cluster was already running
+
+  output = fread('output.csv')
+
+  train_full.hex = h2o.importFile(path = 'final_train.csv', destination_frame = 'final_train')
+  test_full.hex = h2o.importFile(path = 'final_test.csv', destination_frame = 'final_test')
+  names(train_full.hex)
+
+  train_full.hex[, 1] = as.factor(train_full.hex[, 1])
+
+  # splits = h2o.splitFrame(train_full.hex, c(0.6,0.2), seed = 1234)
+  # train  = h2o.assign(splits[[1]], "train.hex") # 60%
+  # valid  = h2o.assign(splits[[2]], "valid.hex") # 20%
+  # test   = h2o.assign(splits[[3]], "test.hex")  # 20%
+
+  response = "project_is_approved"
+  predictors = setdiff(names(train_full.hex), response)
+  weight = paste0("C", as.character(length(names(train_full.hex)) + 1))
+
+  # define the splits
+  h2o_splits = h2o.splitFrame(train_full.hex, c(0.6, 0.2), seed = 1234)
+  h2o_DstTrain  = h2o.assign(h2o_splits[[1]], "train.hex") # 60%
+  h2o_DstTest  = h2o.assign(h2o_splits[[2]], "test.hex") # 20%
+  h2o_DstValid = h2o.assign(h2o_splits[[3]], "valid.hex") # 20%
+
+  # Number of CV folds (to generate level-one data for stacking)
+  cvfolds <- 5
+
+  get_auc <- function(x) h2o.auc(h2o.performance(h2o.getModel(x), newdata = h2o_DstValid))
+
+  # Train & Cross-validate a GBM
+  {
+    my_gbm <- h2o.gbm(x = predictors,
+                      y = response,
+                      training_frame = h2o_DstTrain,
+                      distribution = "bernoulli",
+                      max_depth = 7,
+                      min_rows = 3,
+                      learn_rate = 0.1,
+                      ntrees = 200,
+                      nfolds = cvfolds,
+                      fold_assignment = "Stratified",
+                      keep_cross_validation_predictions = TRUE,
+                      seed = 1,
+                      stopping_metric = "AUC",
+                      balance_classes = T,
+                      max_after_balance_size = 3,
+                      sample_rate = 0.7,
+                      col_sample_rate = 0.6,
+                      calibrate_model = T,
+                      verbose = F,
+                      calibration_frame = h2o_DstTest,
+                      stopping_rounds = 10)
+
+    h2o.saveModel(my_gbm, path = "./", force = TRUE)
+    #my_gbm <- h2o.loadModel('GBM_model_R_1524547384365_773')
+
+    # Measure auc
+    get_auc(my_gbm@model_id)
+  }
+
+  # Train & Cross-validate a RF
+  {
+    my_rf <- h2o.randomForest(x = predictors,
+                              y = response,
+                              training_frame = h2o_DstTrain,
+                              nfolds = cvfolds,
+                              fold_assignment = "Stratified",
+                              keep_cross_validation_predictions = TRUE,
+                              seed = 1,
+                              #balance_classes = T,
+                              #max_after_balance_size = 2,
+                              ntrees = 300,
+                              max_depth = 7,
+                              stopping_rounds = 10,
+                              stopping_metric = "AUC",
+                              verbose = F,
+                              calibrate_model = T,
+                              calibration_frame = h2o_DstTest,
+                              mtries = 10,
+                              binomial_double_trees = T)
+
+    h2o.saveModel(my_rf, path = "./", force = TRUE)
+    #my_rf <- h2o.loadModel('DRF_model_R_1524547384365_991')
+
+    # Measure auc
+    get_auc(my_rf@model_id)
+  }
+
+  # Train & Cross-validate a DNN
+  {
+    h2o.colnames(h2o_DstTrain)
+    h2o_DstTrain[, length(names(h2o_DstTrain)) + 1] = ifelse(h2o_DstTrain[, 1] == 0, 3, 1)
+
+    my_dl <- h2o.deeplearning(x = predictors,
+                              y = response,
+                              training_frame = h2o_DstTrain,
+                              l1 = 0.001,
+                              l2 = 0.001,
+                              hidden = c(50, 75, 75, 50),
+                              nfolds = cvfolds,
+                              fold_assignment = "Stratified",
+                              keep_cross_validation_predictions = TRUE,
+                              seed = 1,
+                              activation = "RectifierWithDropout",
+                              stopping_rounds = 10,
+                              stopping_metric = "AUC",
+                              variable_importances = F,
+                              balance_classes = T,
+                              max_after_balance_size = 2,
+                              input_dropout_ratio = 0.5,
+                              epochs = 1,
+                              weights_column = weight)
+
+    h2o.saveModel(my_dl, path = "./", force = TRUE)
+    #my_dl <- h2o.loadModel('DeepLearning_model_R_1524547384365_1243')
+
+    # Measure auc
+    get_auc(my_dl@model_id)
+  }
+
+  # Create a Stacked Ensemble
+  # To maximize predictive power, will create an H2O Stacked Ensemble from the models we created above and print the performance gain the ensemble has over the best base model.
+  # Train a stacked ensemble using the H2O and XGBoost models from above
+  base_models <- list(my_gbm@model_id, my_rf@model_id, my_dl@model_id)
+
+  h2o_DstTrain[, length(names(h2o_DstTrain)) + 1] = NULL
+
+  ensemble <- h2o.stackedEnsemble(x = predictors,
+                                  y = response,
+                                  training_frame = h2o_DstTrain,
+                                  base_models = base_models)
+  # Eval ensemble performance on a test set
+  perf <- h2o.performance(ensemble, newdata = h2o_DstTest)
+
+  # Compare to base learner performance on the test set
+  baselearner_aucs <- sapply(base_models, get_auc)
+  baselearner_best_auc_test <- max(baselearner_aucs)
+  ensemble_auc_test <- h2o.auc(perf)
+
+  # Compare the test set performance of the best base model to the ensemble.
+  print(sprintf("Best Base-learner Test AUC:  %s", baselearner_best_auc_test))
+  print(sprintf("Ensemble Test AUC:  %s", ensemble_auc_test))
+
+  # predict with the model
+  predictFinal <- h2o.predict(ensemble, test_full.hex)
+
+  # convert H2O format into data frame and save as csv
+  predictFinal.df <- as.data.frame(predictFinal)
+
+  output_final = data.frame(id = train_test_all_feats %>%
+                              filter(tt == "test") %>%
+                              select(id),
+                            project_is_approved = predictFinal.df$p1)
+  # write the submition file
+  fwrite(output_final, "Result.csv")
+
+  output_ensemble = left_join(output, output_final, by = "id") %>%
+    mutate(project_is_approved = (project_is_approved.x + project_is_approved.y)/2) %>%
+    select(id, project_is_approved)
+  fwrite(output_ensemble, 'output_ens.csv')
+
+  # shut down virtual H2O cluster
+  h2o.shutdown(prompt = FALSE)
+}
