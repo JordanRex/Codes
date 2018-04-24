@@ -27,7 +27,7 @@
 library(h2o)
 
 #### Start H2O
-#Start up a 1-node H2O server on your local machine, and allow it to use all CPU cores and up to 2GB of memory:
+#Start up a 1-node H2O server on your local machine, and allow it to use all CPU cores and up to 4GB of memory:
 
 h2o.init(nthreads = 2, max_mem_size = "4G")
 h2o.removeAll() ## clean slate - just in case the cluster was already running
@@ -59,93 +59,91 @@ cvfolds <- 5
 get_auc <- function(x) h2o.auc(h2o.performance(h2o.getModel(x), newdata = h2o_DstTest))
 
 # Train & Cross-validate a GBM
+{
 my_gbm <- h2o.gbm(x = predictors,
                   y = response,
                   training_frame = h2o_DstTrain,
                   distribution = "bernoulli",
-                  max_depth = 3,
-                  min_rows = 2,
-                  learn_rate = 0.2,
+                  max_depth = 5,
+                  min_rows = 3,
+                  learn_rate = 0.15,
+                  ntrees = 100,
                   nfolds = cvfolds,
-                  fold_assignment = "Stratified",
+                  fold_assignment = "Modulo",
                   keep_cross_validation_predictions = TRUE,
                   seed = 1,
                   stopping_metric = "AUC",
-                  #balance_classes = T,
-                  #max_after_balance_size = 0.9,
+                  balance_classes = T,
+                  max_after_balance_size = 2,
                   sample_rate = 0.7,
                   col_sample_rate = 0.7,
-                  #calibrate_model = T,
+                  calibrate_model = T,
                   verbose = F,
-                  #calibration_frame = h2o_DstTest,
+                  calibration_frame = h2o_DstTest,
                   stopping_rounds = 10)
 # Measure auc
 get_auc(my_gbm@model_id)
 
+h2o.saveModel(my_gbm, path = "./", force = TRUE)
+my_gbm <- h2o.loadModel('GBM_model_R_1524547384365_194')
+}
+
 # Train & Cross-validate a RF
+{
 my_rf <- h2o.randomForest(x = predictors,
                           y = response,
                           training_frame = h2o_DstTrain,
                           nfolds = cvfolds,
-                          fold_assignment = "Stratified",
+                          fold_assignment = "Modulo",
                           keep_cross_validation_predictions = TRUE,
-                          seed = 1)
+                          seed = 1,
+                          #balance_classes = T,
+                          #max_after_balance_size = 2,
+                          ntrees = 200,
+                          max_depth = 5,
+                          stopping_rounds = 10,
+                          stopping_metric = "AUC",
+                          verbose = F,
+                          calibrate_model = T,
+                          calibration_frame = h2o_DstTest)
 # Measure auc
 get_auc(my_rf@model_id)
 
+h2o.saveModel(my_rf, path = "./", force = TRUE)
+my_rf <- h2o.loadModel('DRF_model_R_1524547384365_350')
+}
+
 # Train & Cross-validate a DNN
+{
 my_dl <- h2o.deeplearning(x = predictors,
                           y = response,
                           training_frame = h2o_DstTrain,
                           l1 = 0.001,
                           l2 = 0.001,
-                          hidden = c(200, 200, 200),
+                          hidden = c(50, 50, 50),
                           nfolds = cvfolds,
-                          fold_assignment = "Stratified",
+                          fold_assignment = "Modulo",
                           keep_cross_validation_predictions = TRUE,
-                          seed = 1)
+                          seed = 1,
+                          activation = "MaxoutWithDropout",
+                          stopping_rounds = 10,
+                          stopping_metric = "AUC",
+                          variable_importances = F,
+                          balance_classes = T,
+                          max_after_balance_size = 2,
+                          input_dropout_ratio = 0.5,
+                          epochs = 1)
 # Measure auc
 get_auc(my_dl@model_id)
 
-# Train & Cross-validate a (shallow) XGB-GBM
-my_xgb1 <- h2o.xgboost(x = predictors,
-                       y = response,
-                       training_frame = h2o_DstTrain,
-                       distribution = "bernoulli",
-                       ntrees = 50,
-                       max_depth = 3,
-                       min_rows = 2,
-                       learn_rate = 0.2,
-                       nfolds = cvfolds,
-                       fold_assignment = "Stratified",
-                       keep_cross_validation_predictions = TRUE,
-                       seed = 1)
-# Measure auc
-get_auc(my_xgb1@model_id)
-
-# Train & Cross-validate another (deeper) XGB-GBM
-my_xgb2 <- h2o.xgboost(x = predictors,
-                       y = response,
-                       training_frame = h2o_DstTrain,
-                       distribution = "bernoulli",
-                       ntrees = 50,
-                       max_depth = 8,
-                       min_rows = 1,
-                       learn_rate = 0.1,
-                       sample_rate = 0.7,
-                       col_sample_rate = 0.9,
-                       nfolds = cvfolds,
-                       fold_assignment = "Stratified",
-                       keep_cross_validation_predictions = TRUE,
-                       seed = 1)
-# Measure auc
-get_auc(my_xgb2@model_id)
+h2o.saveModel(my_dl, path = "./", force = TRUE)
+my_dl <- h2o.loadModel('DeepLearning_model_R_1524547384365_723')
+}
 
 # Create a Stacked Ensemble
 # To maximize predictive power, will create an H2O Stacked Ensemble from the models we created above and print the performance gain the ensemble has over the best base model.
 # Train a stacked ensemble using the H2O and XGBoost models from above
-base_models <- list(my_gbm@model_id, my_rf@model_id, my_dl@model_id,
-                    my_xgb1@model_id, my_xgb2@model_id)
+base_models <- list(my_gbm@model_id, my_rf@model_id, my_dl@model_id)
 
 ensemble <- h2o.stackedEnsemble(x = predictors,
                                 y = response,

@@ -49,15 +49,29 @@
   train_feats %<>% select_if(function(x) length(unique(x)) > 1)
   test_feats %<>% select(colnames(train_feats))
 
+  # treat NAs in the datasets
+  num_cols_nas_fix_fn = function(x) {
+    x = as.numeric(x)
+    x[which(is.na(x))] = mean(x, na.rm = T)
+    return(x)
+  }
+  train_feats %<>% mutate_if(is.numeric, num_cols_nas_fix_fn)
+
   # missing value cols
   miss_cols = data.frame(miss = colSums(is.na(train_feats))) %>%
     mutate(col = row.names(.)) %>%
     filter(miss > 0) %>%
     .$col
 
+  # mode function
+  Mode = function(x) {
+    ux = unique(x)
+    ux[which.max(tabulate(match(x, ux)))]
+  }
+
   # treat each of the missing value columns
-  fn_miss_treatment_categ = function(x, y = "unknown") {
-    x[which(is.na(x))] = y
+  fn_miss_treatment_categ = function(x) {
+    x[which(is.na(x))] = Mode(x)
     return(x)
   }
 
@@ -65,7 +79,10 @@
                              .funs = fn_miss_treatment_categ)
   test_feats %<>% mutate_if(.predicate = colnames(.) %in% miss_cols,
                              .funs = fn_miss_treatment_categ)
+}
 
+# label encoding segment
+{
   # label encode and store all character columns for immediate modelling
   categ_cols = train_feats %>% select_if(is.character) %>% colnames
   rem_cols = setdiff(colnames(train_feats), categ_cols)
@@ -110,81 +127,89 @@
   dep_encoded = CatEncoders::LabelEncoder.fit(train_dep$status_group)
   train_dep$status_group = CatEncoders::transform(dep_encoded, train_dep$status_group) - 1
 
-  train_sample = sample_frac(tbl = train, size = 0.7) %>%
-    select(-tt)
-  train_sample_dep_actual = train_sample %>%
-    left_join(., train_dep) %>%
-    select(id, status_group)
-  test_sample = anti_join(train, train_sample, by = "id") %>%
-    select(-tt)
-  test_sample_dep_actual = test_sample %>%
-    left_join(., train_dep) %>%
-    select(id, status_group)
-  test_ids = test_sample_dep_actual %>%
-    .$id
-
-  train_sample %<>% select(-id)
-  test_sample %<>% select(-id)
-
-  train_data_matrix = xgb.DMatrix(data = as.matrix(train_sample),
-                                  label = as.matrix(train_sample_dep_actual$status_group))
-  test_data_matrix = xgb.DMatrix(data = as.matrix(test_sample),
-                                 label = as.matrix(test_sample_dep_actual$status_group))
-
-  numberOfClasses = length(unique(train_dep$status_group))
-
-  # n-fold cv with random search on parameters
+  # commented since it was a one time investment
   {
-    best_param = list()
-    best_seednumber = 1234
-    best_logloss = Inf
-    best_logloss_index = 0
-
-    for (iter in 1:25) {
-      param = list(objective = "multi:softprob",
-                   eval_metric = "mlogloss",
-                   num_class = numberOfClasses,
-                   max_depth = sample(10:15, 1),
-                   eta = runif(1, .01, .2),
-                   gamma = runif(1, 0.0, 0.2),
-                   subsample = runif(1, .7, .9),
-                   colsample_bytree = runif(1, .5, .7),
-                   min_child_weight = sample(1:10, 1),
-                   max_delta_step = sample(1:10, 1)
-      )
-      cv.nround = sample(seq.int(100, 500, 100), 1)
-      cv.nfold = 5
-      seed.number = sample.int(10000, 1)[[1]]
-      set.seed(seed.number)
-      mdcv <- xgb.cv(data=train_data_matrix, params = param, stratified = T, print_every_n = 50,
-                     nfold = cv.nfold, nrounds = cv.nround,
-                     verbose = T, early_stopping_rounds = 10, maximize = FALSE)
-
-      min_logloss = min(mdcv$evaluation_log$test_mlogloss_mean)
-      min_logloss_index = which.min(mdcv$evaluation_log$test_mlogloss_mean)
-
-      if (min_logloss < best_logloss) {
-        best_logloss = min_logloss
-        best_logloss_index = min_logloss_index
-        best_seednumber = seed.number
-        best_param = param
-      }
-      print(paste0("iter is ", i))
-    }
-
-    nround = best_logloss_index
-    set.seed(best_seednumber)
+  # train_sample = sample_frac(tbl = train, size = 0.7) %>%
+  #   select(-tt)
+  # train_sample_dep_actual = train_sample %>%
+  #   left_join(., train_dep) %>%
+  #   select(id, status_group)
+  # test_sample = anti_join(train, train_sample, by = "id") %>%
+  #   select(-tt)
+  # test_sample_dep_actual = test_sample %>%
+  #   left_join(., train_dep) %>%
+  #   select(id, status_group)
+  # test_ids = test_sample_dep_actual %>%
+  #   .$id
+  #
+  # train_sample %<>% select(-id)
+  # test_sample %<>% select(-id)
+  #
+  # train_data_matrix = xgb.DMatrix(data = as.matrix(train_sample),
+  #                                 label = as.matrix(train_sample_dep_actual$status_group))
+  # test_data_matrix = xgb.DMatrix(data = as.matrix(test_sample),
+  #                                label = as.matrix(test_sample_dep_actual$status_group))
+  #
+  # numberOfClasses = length(unique(train_dep$status_group))
+  #
+  # # n-fold cv with random search on parameters
+  # {
+  #   best_param = list()
+  #   best_seednumber = 1234
+  #   best_logloss = Inf
+  #   best_logloss_index = 0
+  #
+  #   for (iter in 1:25) {
+  #     param = list(objective = "multi:softprob",
+  #                  eval_metric = "mlogloss",
+  #                  num_class = numberOfClasses,
+  #                  max_depth = sample(10:15, 1),
+  #                  eta = runif(1, .01, .2),
+  #                  gamma = runif(1, 0.0, 0.2),
+  #                  subsample = runif(1, .7, .9),
+  #                  colsample_bytree = runif(1, .5, .7),
+  #                  min_child_weight = sample(1:10, 1),
+  #                  max_delta_step = sample(1:10, 1)
+  #     )
+  #     cv.nround = sample(seq.int(100, 500, 100), 1)
+  #     cv.nfold = 5
+  #     seed.number = sample.int(10000, 1)[[1]]
+  #     set.seed(seed.number)
+  #     mdcv <- xgb.cv(data = train_data_matrix, params = param, stratified = T, print_every_n = 50,
+  #                    nfold = cv.nfold, nrounds = cv.nround,
+  #                    verbose = T, early_stopping_rounds = 10, maximize = FALSE)
+  #
+  #     min_logloss = min(mdcv$evaluation_log$test_mlogloss_mean)
+  #     min_logloss_index = which.min(mdcv$evaluation_log$test_mlogloss_mean)
+  #
+  #     if (min_logloss < best_logloss) {
+  #       best_logloss = min_logloss
+  #       best_logloss_index = min_logloss_index
+  #       best_seednumber = seed.number
+  #       best_param = param
+  #     }
+  #     print(paste0("iter is ", iter))
+  #   }
+  #
+  #   nround = best_logloss_index
+  #   set.seed(best_seednumber)
+  #   saveRDS(nround, 'nround.rds')
+  #   best_params_df = data.frame(best_param)
+  #   saveRDS(best_params_df, 'best_params_df.rds')
   }
+}
 
-  best_params_df = data.frame(best_param) %>%
-    cbind(., data.frame(nround = nround))
-  saveRDS(best_params_df, 'best_params_df.rds')
+# main modelling
+{
+gc()
+  best_params_df = readRDS('best_params_df.rds')
+  nround = readRDS('nround.rds')
 
   train_full_matrix = xgb.DMatrix(data = as.matrix(train %>% select(-tt, -id)),
                                   label = as.matrix(train_dep$status_group))
   test_full_matrix = xgb.DMatrix(data = as.matrix(test %>% select(-tt, -id)))
 
-  xgb_params = best_param
+  xgb_params = best_params_df
   nround = nround
   cv.nfold = 5
 
@@ -202,13 +227,13 @@
     mutate(max_prob = max.col(., ties.method = "last") - 1,
            label = train_dep$status_group,
            pred_flag = if_else(max_prob == label, 1, 0))
+  mean(OOF_prediction$pred_flag)
 
   md = xgb.train(data = train_full_matrix,
-                 params = best_param,
+                 params = best_params_df,
                  nrounds = nround,
                  verbose = T,
-                 print_every_n = 50,
-                 early_stopping_rounds = 10)
+                 print_every_n = 50)
 
   test_ids = test$id
   test_final_predictions = predict(md, test_full_matrix, reshape = T)
