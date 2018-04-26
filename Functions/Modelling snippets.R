@@ -1,5 +1,8 @@
 ######################
-# Modelling snippets #
+# ML snippets #
+# model functions (for ranger, xgboost, h2o - gbm/randomforest/dnn)
+# feature manipulation functions (for PCA, ICA, deviation encoding, bucketing, feature selection)
+
 ######################
 
 ##################################################################################################################################
@@ -99,4 +102,51 @@ xgb_importance_fn_2 = function(xgbmodel, train, response = "dep", id = "id", n =
 ### function to do ranger ###
 
 
+##################################################################################################################################
+
+
+
+##################################################################################################################################
+### function to do deviation encoding ###
+# the arguments are the train, test dataframes; and the character columns' subset and numeric dependant variable dataframes
+# works best for regression problems (forecasting)
+# for classification convert the dependant to a numeric (label encoded) column
+feateng_categtoDeviationenc_fn = function(char_data, num_data, train, test) {
+    train_char_data = char_data %>% data.frame() %>% mutate_all(as.character)
+    train_num_data = num_data %>% data.frame() %>% mutate_all(as.character) %>% mutate_all(as.numeric)
+
+    for (i in 1:ncol(train_char_data)) {
+      temp_col = colnames(train_char_data[, i, drop = F])
+
+      temp_cols = c(temp_col,
+                    paste0(temp_col, "_mean"),
+                    paste0(temp_col, "_sd"),
+                    paste0(temp_col, "_median"))
+
+      temp = train_char_data[, i, drop = F] %>%
+        cbind(., train_num_data) %>%
+        group_by_at(vars(-matches("is_female"))) %>%
+        mutate(mean = mean(is_female),
+               sd = sd(is_female),
+               median = median(is_female)) %>%
+        ungroup %>%
+        select(temp_col, mean, sd, median) %>%
+        set_colnames(temp_cols) %>%
+        distinct %>%
+        mutate_all(as.numeric)
+
+      train <<- left_join(train, temp)
+      test <<- left_join(test, temp)
+    }
+    return(print("train and test have been generated"))
+  }
+##################################################################################################################################
+
+
+##################################################################################################################################
+### function to do bucket feature creation ###
+# supervised, uses dependant variable mean and sd with each level in the categorical features
+# preferred for a categorical variable if the number of levels it contains is < 50-100 (argument n gives this control)
+#
+feateng_bucket_fn = function(train)
 ##################################################################################################################################
