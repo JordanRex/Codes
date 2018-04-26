@@ -35,14 +35,14 @@
 
     suppressMessages(
       {
-        packages("xgboost")
-        packages("stringr")
-        packages("qdapTools")
-        packages("CatEncoders")
-        packages("dummies")
-        packages("fastICA")
-        packages("splitstackshape")
-        packages("qdap")
+        # packages("xgboost")
+        # packages("stringr")
+        # packages("qdapTools")
+        # packages("CatEncoders")
+        # packages("dummies")
+        # packages("fastICA")
+        # packages("splitstackshape")
+        # packages("qdap")
         packages("data.table")
         packages("magrittr")
         packages("dplyr")
@@ -206,41 +206,6 @@ factor_fn = function(x, n = 53) {
     }
   }
 
-  # 3. deviation feature encoding function
-  {
-  categtoDeviationenc = function(char_data,
-                                 num_data) {
-    train_char_data = char_data %>% data.frame() %>% mutate_all(as.character)
-    train_num_data = num_data %>% data.frame() %>% mutate_all(as.character) %>% mutate_all(as.numeric)
-
-    for (i in 1:ncol(train_char_data)) {
-      temp_col = colnames(train_char_data[, i, drop = F])
-
-      temp_cols = c(temp_col,
-                    paste0(temp_col, "_mean"),
-                    paste0(temp_col, "_sd"),
-                    paste0(temp_col, "_median"))
-
-      temp = train_char_data[, i, drop = F] %>%
-        cbind(., train_num_data) %>%
-        group_by_at(vars(-matches("is_female"))) %>%
-        mutate(mean = mean(is_female),
-               sd = sd(is_female),
-               median = median(is_female)) %>%
-        ungroup %>%
-        select(temp_col, mean, sd, median) %>%
-        set_colnames(temp_cols) %>%
-        distinct %>%
-        mutate_all(as.numeric)
-
-      train_2 <<- left_join(train_2, temp)
-      test_2 <<- left_join(test_2, temp)
-    }
-
-    return(print("train_2 and test_2 have been generated"))
-  }
-  }
-
   # 4. PCA function
   {
     pca_fn = function(train, test, response, id, no_of_pca_feats = 10) {
@@ -293,5 +258,25 @@ factor_fn = function(x, n = 53) {
     }
   }
 
-  # 6.
+  # 6. cor function
+  # returns a vector with column names of the highly correlated and removable columns
+  {
+    cor_fn = function(x, cor_threshold = 0.8) {
+      cor_matrix = cor(x)
+      cor_matrix[is.na(cor_matrix)] <- 0
+
+      # find attributes that are highly corrected (ideally > 0.8, change if necessary)
+      highlyCorrelated = findCorrelation(correlationMatrix, cutoff = cor_threshold)
+
+      # print indexes of highly correlated attributes
+      print("Correlated features")
+      print(colnames(ADS_cor[ , highlyCorrelated, drop = F]))
+
+      highlyCorrelated = colnames(ADS_cor[ , highlyCorrelated, drop = F])
+
+      return(highlyCorrelated)
+  }
+  }
+
+  # 7.
 }
