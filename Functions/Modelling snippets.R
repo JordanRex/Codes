@@ -148,5 +148,24 @@ feateng_categtoDeviationenc_fn = function(char_data, num_data, train, test) {
 # supervised, uses dependant variable mean and sd with each level in the categorical features
 # preferred for a categorical variable if the number of levels it contains is < 50-100 (argument n gives this control)
 #
-feateng_bucket_fn = function(train)
+feateng_bucket_fn = function(train, num_levels = 50) {
+  temp = train
+
+  temp_categ = temp %>%
+    select_if(is.character) %>%
+    summarise_all(.funs = n_distinct) %>%
+    melt %>%
+    .$variable
+
+  feateng_bucket_col_fn = function(x) {
+    x = as.character(x)
+
+    temp_bucket_num = floor(length(unique(x)) /
+                              floor(sqrt(length(unique(x)))))
+
+    temp_x = temp %>%
+      group_by_(.dots = list(x)) %>%
+      summarise()
+  }
+}
 ##################################################################################################################################
