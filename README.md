@@ -1,6 +1,6 @@
 # Codes repository
 
-Competitions:  
-  DonorsChoose - Kaggle  
-  PumpItUp - DrivenData  
-  h2o ensemble dummy code
+Competitions
+Personal functions
+Reference materials for ML
+Random things otherwise as well here for some reason
