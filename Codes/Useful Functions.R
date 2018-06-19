@@ -1,5 +1,7 @@
 ###############
 ## Functions ##
+## AUTHOR -> VARUN V
+## Thanks to https://github.com/raredd for some functions used here
 ###############
 
 ############
@@ -47,7 +49,6 @@
         packages("magrittr")
         packages("dplyr")
       })
-
   }
 }
 
@@ -56,14 +57,13 @@
 '%!in%' = function(x,y)!('%in%'(x,y))
 
 # 3. function to paste 2 columns and make numeric equivalent
-pasteTonum = function(x, y) {
+pasteTonum_fn = function(x, y) {
   z = as.numeric(paste0(x, y))
   return(z)
 }
 
 # 4. stopwords for NLP
-{
-  all_stopwords = function(x = NULL) {
+  all_stopwords_fn = function(x = NULL) {
     x = stopwords(kind = "en") %>%
       append(., stop_words$word) %>%
       append(., stopwords::data_stopwords_smart$en) %>%
@@ -77,7 +77,6 @@ pasteTonum = function(x, y) {
 
     return(x)
   }
-}
 
 # 5. function to flag which columns are pointless
 useless_cols_fn = function(x) {
@@ -136,7 +135,121 @@ factor_fn = function(x, n = 53) {
   return(x)
 }
 
-# 9.
+# 9. Get RAM size in MB according to OS
+ram_memory_fn = function() {
+  OSType = Sys.info()['sysname']
+  if(OSType == "Windows")
+    RAMSize = memory.limit() else if (OSType == "Linux")
+    RAMSize = floor(as.numeric(system("awk '/MemTotal/ {print $2}' /proc/meminfo",intern=TRUE))/1024) else if (OSType == "Darwin")
+      cmdOutput = system("sysctl hw.memsize",intern = TRUE)
+    RAMSize = substr(cmdOutput,13,nchar(cmdOutput))
+    RAMSize = as.numeric(RAMSize)/(1024*1024) else
+    RAMSize = NULL
+
+  return(RAMSize)
+}
+
+# 10. create year, month, day and year-month columns from a Date column
+date_multi_feat_fn = function(dataset, date_column = "Date") {
+  temp = dataset
+
+  ## you can use different methods to escape special characters
+  # either '[/]' or '\\/' or '\\Q/\\E'
+  # the first one is better because you wont have to deal with those extra escape characters being a problem when you have to save the regex pattern inside a string
+  date_fn_year = paste0('gsub(', date_column, ', pattern = "(.*)[/]", replacement = "")')
+  date_fn_month = paste0('gsub(', date_column, ', pattern = "[/](.*)", replacement = "") %>% str_pad(., width = 2, side = "left", pad = "0")')
+  date_fn_day = paste0('str_extract(', date_column, ', pattern = regex("(?<=[/]).*(?=[/](.*?))", perl = T)) %>% str_pad(., width = 2, side = "left", pad = "0")')
+  date_fn_year_month = paste0('paste0(', paste0(date_column, c("_year", "_month"), collapse = ","), ')')
+  date_cols = paste0(date_column, c("_year", "_month", "_day", "_year_month"))
+
+  temp %<>%
+    mutate_(.dots = setNames(list(date_fn_year, date_fn_month, date_fn_day, date_fn_year_month),
+                             date_cols))
+
+  return(temp)
+
+  ## example --->> dataset %<>% date_multi_feat_fn(., date_column = "Date")
+}
+
+# 11. function to get the range of values inside a range by giving an input of the range index to be returned
+'%:%' <- function(object, range) {
+  FUN <- if (!is.null(dim(object))) {
+    if (is.matrix(object)) colnames else names
+  } else identity
+  wh <- if (is.numeric(range))
+    range else which(FUN(object) %in% range)
+  FUN(object)[seq(wh[1L], wh[2L])]
+}
+# example -> 4:9 %:% c(3,5) = (6, 7, 8)
+# example -> letters %:% c('e', 'n') = ("e", "f", "g", "h", "i", "j", "k", "l", "m", "n")
+
+# 12. pairwise sum of 2 vectors
+psum_fn = function(..., na.rm = FALSE) {
+  dat = do.call('cbind', list(...))
+  res = rowSums(dat, na.rm = na.rm)
+
+  idx = !rowSums(!is.na(dat))
+  res[idx] = NA
+
+  return(res)
+}
+# example -> psum(1:10, 10:19, 20:29) = (31, 34, 37, 40, 43, 46, 49, 52, 55, 58)
+
+# 13. rescaling function adopted from scales package
+rescaler_fn = function (x, to = c(0, 1), from = range(x, na.rm = TRUE)) {
+  zero_range = function(x, tol = .Machine$double.eps * 100) {
+    if (length(x) == 1L)  return(TRUE)
+    if (length(x) != 2L)  stop('\'x\' must be length one or two')
+    if (any(is.na(x)))    return(NA)
+    if (x[1L] == x[2L])   return(TRUE)
+    if (all(is.infinite(x))) return(FALSE)
+    m = min(abs(x))
+    if (m == 0) return(FALSE)
+    abs((x[1L] - x[2L]) / m) < tol
+  }
+
+  if (zero_range(from) || zero_range(to))
+    return(rep(mean(to), length(x)))
+
+  (x - from[1L]) / diff(from) * diff(to) + to[1L]
+}
+
+# 14. multi-recursive join
+multi_join_fn = function(list_dfs, ...) {
+  Reduce(function(x, y) left_join(x, y, ...), list_dfs)
+}
+
+# 15. utils::View shortcut function
+view = function(x, title) {
+  utils::View(x, title)
+}
+
+# 16. convenience functions for col_to_rownames and the reverse
+{
+  rownames_to_column <- function(data, column = 'rownames', where = 1L) {
+    column <- make.unique(c(colnames(data), column))[ncol(data) + 1L]
+    data   <- insert(data, col = where, repl = rownames(data))
+
+    colnames(data)[where] <- column
+    rownames(data) <- NULL
+
+    data
+  }
+
+  column_to_rownames <- function(data, column = 'rownames', where = 1L) {
+    where <- if (missing(where))
+      which(colnames(data) %in% column) else where
+
+    stopifnot(
+      length(where) == 1L,
+      where %in% seq.int(ncol(data))
+    )
+
+    rownames(data) <- make.unique(as.character(data[, where]))
+
+    data[, -where, drop = FALSE]
+  }
+}
 }
 
 
@@ -205,6 +318,8 @@ factor_fn = function(x, n = 53) {
       return("all ok")
     }
   }
+
+  # 3.
 
   # 4. PCA function
   {
@@ -278,5 +393,24 @@ factor_fn = function(x, n = 53) {
   }
   }
 
-  # 7.
+  # 7. ram size function
+  # Get RAM size in MB according to OS
+  ram_memory = function() {
+    OSType = Sys.info()['sysname']
+    RAMSize = NULL
+
+    if(OSType == "Windows")
+      RAMSize = memory.limit()
+    if (OSType == "Linux")
+      RAMSize = floor(as.numeric(system("awk '/MemTotal/ {print $2}' /proc/meminfo",intern=TRUE))/1024)
+    if (OSType == "Darwin") {
+      cmdOutput = system("sysctl hw.memsize",intern = TRUE)
+      RAMSize = substr(cmdOutput,13,nchar(cmdOutput))
+      RAMSize = as.numeric(RAMSize)/(1024*1024)
+    }
+
+    return(RAMSize)
+  }
+
+  # 8.
 }
