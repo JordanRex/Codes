@@ -2,9 +2,9 @@
 # ML snippets #
 # model functions (for ranger, xgboost, h2o - gbm/randomforest/dnn)
 # feature manipulation functions (for PCA, ICA, deviation encoding, bucketing, feature selection)
-
 ######################
 
+## XGBOOST ##
 ##################################################################################################################################
 ### function to create an xgboost model ###
 # one argument = input dataset with both train and test datasets appended
@@ -55,10 +55,9 @@ xgb_model_fn = function(x, nround = 1000, eta = 0.01, weight = c(3, 1), maxdepth
 
   return("seems fine")
 }
-##################################################################################################################################
 
+#--------------------------------------------------------------------------------------------------------------------------------#
 
-##################################################################################################################################
 ### function to get the importance matrix from an xgboost model and select n numer of top features alone ###
 # function 1 -> does the modelling and then returns the important features as a vector and a dataframe with rank
 # objective set to binary:logistic, can be customized for any/all models (currently not dynamic)
@@ -95,55 +94,167 @@ xgb_importance_fn_2 = function(xgbmodel, train, response = "dep", id = "id", n =
     filter(Rank <= n)
   top_n_features <<- as.vector(Importance_table$Feature)
 }
+
+#--------------------------------------------------------------------------------------------------------------------------------#
+
+### custom function modified from MLBayesOpt package for bayesian hyper-parameter tuning
+# can perform tuning for classification (binary/multi) and regression
+# needs more testing for special cases and other parameters
+# provide ranges for parameters if required (defaults provided), needs what acquisition method to be used for the bayesian segment
+# takes xgb.Dmatrix objects as input for simplicity (modify if only dataframe can be provided, not recommended)
+xgb_opt_custom = function(train_df, test_df, test_label, objectfun,
+                          evalmetric, eta_range = c(0.001, 0.5), max_depth_range = c(4, 8L), nrounds_range = c(50, 160L), subsample_range = c(0.1, 1L), bytree_range = c(0.4, 1L), init_points = 5, n_iter = 10, acq = c("ucb", "ei"), kappa = 2.576, eps = 0, optkernel = list(type = "exponential", power = 2), classes = NULL) {
+  dtrain <- train_df
+  dtest <- test_df
+  if (grepl("logi", objectfun) == TRUE) {
+    xgb_holdout <- function(object_fun, eval_met, num_classes,
+                            eta_opt, max_depth_opt, nrounds_opt, subsample_opt,
+                            bytree_opt) {
+      object_fun <- objectfun
+      eval_met <- evalmetric
+      model <- xgb.train(params = list(objective = object_fun,
+                                       eval_metric = eval_met, nthread = 1, eta = eta_opt,
+                                       max_depth = as.integer(round(max_depth_opt, digits = 0)), subsample = subsample_opt,
+                                       colsample_bytree = bytree_opt), data = dtrain,
+                         nrounds = nrounds_opt)
+      t_pred <- predict(model, newdata = dtest)
+      Pred <- sum(diag(table(data_test_label, t_pred)))/nrow(test_data)
+      list(Score = Pred, Pred = Pred)
+    }
+  }
+  else
+    if (grepl("multi", objectfun) == TRUE) {
+      xgb_holdout <- function(object_fun, eval_met, num_classes,
+                              eta_opt, max_depth_opt, nrounds_opt, subsample_opt,
+                              bytree_opt) {
+        object_fun <- objectfun
+        eval_met <- evalmetric
+        num_classes <- classes
+        model <- xgb.train(params = list(objective = object_fun,
+                                         num_class = num_classes, nthread = 1, eval_metric = eval_met,
+                                         eta = eta_opt, max_depth = as.integer(round(max_depth_opt, digits = 0)), subsample = subsample_opt,
+                                         colsample_bytree = bytree_opt), data = dtrain,
+                           nrounds = nrounds_opt)
+        t_pred <- predict(model, newdata = dtest)
+        Pred <- sum(diag(table(data_test_label, t_pred)))/nrow(test_data)
+        list(Score = Pred, Pred = Pred)
+      }
+    }
+  else {
+    xgb_holdout <- function(object_fun, eval_met,
+                            eta_opt, max_depth_opt, nrounds_opt, subsample_opt,
+                            bytree_opt) {
+      object_fun <- objectfun
+      eval_met <- evalmetric
+      model <- xgb.train(params = list(objective = object_fun, nthread = 1, eval_metric = eval_met,
+                                       eta = eta_opt, max_depth = as.integer(round(max_depth_opt, digits = 0)), subsample = subsample_opt,
+                                       colsample_bytree = bytree_opt), data = dtrain,
+                         nrounds = nrounds_opt)
+      t_pred_df = data.frame(actuals = test_label[, 1, drop = T], pred = predict(model, newdata = dtest)) %>%
+        mutate(APE = abs((actuals - pred)/(if_else(actuals == 0, 1, actuals))),
+               APE = if_else(APE > 1, 1, APE))
+      Pred = 1 - mean(t_pred_df$APE)
+      list(Score = Pred, Pred = Pred)
+    }
+  }
+  opt_res <- rBayesianOptimization::BayesianOptimization(xgb_holdout, bounds = list(eta_opt = eta_range,
+                                                                                    max_depth_opt = max_depth_range, nrounds_opt = nrounds_range,
+                                                                                    subsample_opt = subsample_range, bytree_opt = bytree_range),
+                                                         init_points, init_grid_dt = NULL, n_iter, acq, kappa,
+                                                         eps, optkernel, verbose = TRUE)
+  return(opt_res)
+}
+
+# example #
+{
+# xgb_bayes_output = xgb_opt_custom(train_df = train_xgb, test_df = test_xgb, test_label = test_label,
+#                                   objectfun = "reg:linear", evalmetric = "rmse",
+#                                   eta_range = c(0.01, 0.3), max_depth_range = c(3, 6L),
+#                                   nrounds_range = c(500, 1000L), subsample_range = c(0.3, 0.9),
+#                                   bytree_range = c(0.4, 0.8), init_points = 5, n_iter = 5, acq = "ucb",
+#                                   kappa = 2.576)
+#
+# # params from the bayesian optimized random search hyperparameter tuning
+# params = list(booster = "gbtree",
+#               eta = xgb_bayes_output$Best_Par["eta_opt"],
+#               max_depth = as.integer(round(xgb_bayes_output$Best_Par["max_depth_opt"], digits = 0)),
+#               subsample = xgb_bayes_output$Best_Par["subsample_opt"],
+#               colsample_bytree = xgb_bayes_output$Best_Par["bytree_opt"],
+#               obj = "reg:linear",
+#               eval_metric = "rmse")
+#
+# xgb_model = xgb.train(params = params, nrounds = xgb_bayes_output$Best_Par["nrounds_opt"], data = train_xgb, verbose = T, print_every_n = 10)
+}
+##################################################################################################################################
+
+## RANGER(RF) ##
 ##################################################################################################################################
 
 
 ##################################################################################################################################
-### function to do ranger ###
+
+## HTS/FORECAST ##
+##################################################################################################################################
+### function to create an hts/gts object ###
+# make a singular id column, singular time dimension, and specify characters convention used for creating the id column
+# example -> id_col = store + department = S{1-9} + D{1-99} = S01D01 = characters(2,3)
+train_hts_fn = function(train, id_col = "id", time_col = "date", dep_col = "dep") {
+  acast_fn = paste0(time_col , '~', id_col)
+
+  train_ts = x %>%
+    select_(id_col, time_col, dep_col) %>%
+    reshape2::acast(., formula = acast_fn) %>%
+    ts %>%
+    hts(., characters = c(2,3))
+
+  return(train_ts)
+}
+
+
+### function to create and return an hts model
+# specify the train ts object, train/test xreg objects (only if you have regressors! else skip argument), fmethod to be used (ets|arima|hw?), seasonal = T or F, h = horizon to be predicted
+hts_model_fn = function(train_ts, train_xreg = NULL, test_xreg = NULL, h = 12, fmethod = "arima", seasonal = T) {
+  hts_model = forecast(object = train_ts, xreg = train_xreg, newxreg = test_xreg, h = h, fmethod = fmethod, seasonal = seasonal)
+  return(hts_model)
+}
+
 
 
 ##################################################################################################################################
 
-
-
+## FEATURE ENGINEERING ##
 ##################################################################################################################################
 ### function to do deviation encoding ###
 # the arguments are the train, test dataframes; and the character columns' subset and numeric dependant variable dataframes
 # works best for regression problems (forecasting)
 # for classification convert the dependant to a numeric (label encoded) column
-feateng_categtoDeviationenc_fn = function(char_data, num_data, train, test) {
-    train_char_data = char_data %>% data.frame() %>% mutate_all(as.character)
-    train_num_data = num_data %>% data.frame() %>% mutate_all(as.character) %>% mutate_all(as.numeric)
+feateng_categtoDeviationenc_fn = function(train, test, dep_var) {
+    train_char_data = train %>% select_if(function(col) is.character(col) | is.logical(col)) %>%
+      mutate_all(as.character)
 
     for (i in 1:ncol(train_char_data)) {
       temp_col = colnames(train_char_data[, i, drop = F])
 
-      temp_cols = c(temp_col,
-                    paste0(temp_col, "_mean"),
-                    paste0(temp_col, "_sd"),
-                    paste0(temp_col, "_median"))
+      dev_encod_cols = paste0(temp_col, c("_mean", "_min", "_max", "_sd", "_median", "_ndistinct"))
+      dev_funs = paste0(c("mean(", "min(", "max(", "sd(", "median(", "n_distinct("), "dep", ")") %>% as.list
 
       temp = train_char_data[, i, drop = F] %>%
-        cbind(., train_num_data) %>%
-        group_by_at(vars(-matches("is_female"))) %>%
-        mutate(mean = mean(is_female),
-               sd = sd(is_female),
-               median = median(is_female)) %>%
+        bind_cols(., dep_var %>% set_colnames("dep")) %>%
+        group_by_at(vars(-matches("dep"))) %>%
+        mutate_(.dots = setNames(dev_funs, dev_encod_cols)) %>%
         ungroup %>%
-        select(temp_col, mean, sd, median) %>%
-        set_colnames(temp_cols) %>%
+        select(-dep) %>%
         distinct %>%
-        mutate_all(as.numeric)
+        mutate_at(vars(-matches(lazyeval::uq(temp_col))), as.numeric)
 
       train <<- left_join(train, temp)
       test <<- left_join(test, temp)
     }
     return(print("train and test have been generated"))
   }
-##################################################################################################################################
 
+#--------------------------------------------------------------------------------------------------------------------------------#
 
-##################################################################################################################################
 ### function to do bucket feature creation ###
 # supervised, uses dependant variable mean and sd with each level in the categorical features
 # preferred for a categorical variable if the number of levels it contains is < 50-100 (argument n gives this control)
