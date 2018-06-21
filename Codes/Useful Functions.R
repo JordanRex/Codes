@@ -318,7 +318,268 @@
     }
   }
   
+  # 21. function to get period for timeseries
+  find_freq_fn = function(x)
+  {
+    n <- length(x)
+    spec <- spec.ar(c(x),plot = FALSE)
+    if (max(spec$spec) > 10) # Arbitrary threshold chosen by trial and error.
+    {
+      period <- round(1/spec$freq[which.max(spec$spec)])
+      if (period == Inf) # Find next local maximum
+      {
+        j <- which(diff(spec$spec) > 0)
+        if (length(j) > 0)
+        {
+          nextmax <- j[1] + which.max(spec$spec[j[1]:500])
+          period <- round(1/spec$freq[nextmax])
+        }
+        else
+          period <- 1
+      }
+    }
+    else
+      period <- 1
+    return(period)
+  }
   
+  # 22. Hyndman function for identifying outliers in time series
+  tsoutliers_fn = function(x,plot=FALSE)
+  {
+    x <- as.ts(x)
+    if (frequency(x) > 1)
+      resid <- stl(x, s.window = "periodic", robust = TRUE)$time.series[,3]
+    else
+    {
+      tt <- 1:length(x)
+      resid <- residuals(loess(x ~ tt))
+    }
+    resid.q <- quantile(resid,prob = c(0.25,0.75))
+    iqr <- diff(resid.q)
+    limits <- resid.q + 1.5*iqr*c(-1,1)
+    score <- abs(pmin((resid - limits[1])/iqr,0) + pmax((resid - limits[2])/iqr,0))
+    if (plot)
+    {
+      plot(x)
+      x2 <- ts(rep(NA,length(x)))
+      x2[score > 0] <- x[score > 0]
+      tsp(x2) <- tsp(x)
+      points(x2,pch = 19,col = "red")
+      return(invisible(score))
+    }
+    else
+      return(score)
+  }
+  
+  # 23. To use addins in RStudio
+  {
+    devtools::install_github("rstudio/addinexamples", type = "source")
+  }
+  
+  # 24. statistical method of evaluating if log transform should be used for arima
+  {
+    if (gqtest(ads_ts ~ 1)$p.value < 0.1) {...}
+    # can be used with an OR (||) operator with below expression as well
+    if (abs(BoxCox.lambda(ads_ts) < 0.1)) {...}
+  }
+  
+  # 25. To remove files from a directory with a pattern
+  {
+    do.call(file.remove, list(list.files("C:/Temp", full.names = TRUE)))
+    # use grep to get the pattern out
+  }
+  
+  # 24. setting wd to current file location (two methods given)
+  {
+    # A: works only when the r script is called through the terminal
+    this.dir <- dirname(parent.frame(2)$ofile)
+    setwd(this.dir)
+    
+    # B: works in RStudio
+    setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+  }
+  
+  # 25. user-defined functions to get the rolling mean and standard deviation, and the rolling percentile values
+  {
+    #
+    my.rollapply <- function(vec, width, FUN)
+      sapply(seq_along(vec),
+             function(i) if (i < width) NA else FUN(vec[i:(i - width + 1)]))
+    
+    my.rollapply.quantile <- function(vec, width,x)
+      sapply(seq_along(vec),
+             function(i) if (i < width) NA else quantile(vec[i:(i - width + 1)],probs = x))
+  }
+  
+  # 26: for updating R within RStudio
+  {
+    if (!require(installr)) {
+      install.packages("installr"); require(installr)} #load / install+load installr
+    
+    # using the package:
+    updateR()
+  }
+  
+  # 27. Various ways of printing content
+  {
+    my_string = "hehe"
+    
+    # print()
+    print(my_string, quote = F)
+    
+    # noquote()
+    noquote(my_string)
+    
+    # cat()
+    # used for concatenation
+    cat(my_string,"hehe", sep = ".", fill = 5)
+    
+    # format()
+    # justify = c("c", "l", "r", "n")
+    format(my_string, width = 10, justify = "r")
+    
+    # sprintf()
+    sprintf("%05.1f", pi)
+    
+    # toString()
+    # can be used a helper for the above commands to pass a vector of multiple strings, separated by commas
+    toString(c("Bonjour", 123, TRUE, NA, log(exp(1))))
+  }
+  
+  # 28. Random regex codes
+  # Need to make them functions later
+  {
+    # using a sample df to display usage of some regex functions
+    df <- USArrests
+    df.var = rownames(df)
+    
+    df.name = deparse(substitute(df))
+    df.var.name = deparse(substitute(df.var))
+    
+    # Abbreviating Strings
+    df.var.abbr = abbreviate(df.var, minlength = 6, use.classes = F)
+    
+    # Getting the longest string in a column
+    char.df.var = nchar(df.var)
+    assign(paste0(df.name,".longest.string"),df.var[which(char.df.var == max(char.df.var))], envir = .GlobalEnv)
+    
+    # Get all values in a column that contain the given string (either small or large)
+    df.contains.values = grep(pattern = "[Ww]", x = df.var, value = TRUE)
+    # insert [] brackets around the string if you want to search for all values that contain both upper and lower case values for the string. Here it displays all values with either w or W in the string
+    df.contains.values = grep(pattern = "w", x = df.var, value = TRUE, ignore.case = T)
+    #above is a similar way of doing the same operation
+    
+    # Get all the values in a column that start with a given character
+    df.start.value = subset(df.var,substr(df.var,1,1) %in% c("W","w"))
+    
+    # To get the total number of times a particular character appears in all the strings in a vector
+    string.list = c("a","e","i","o","u")
+    num.string.list = vector(mode = "integer", length = 5)
+    for (j in seq_along(string.list)) {
+      num.temp = str_count(tolower(df.var), string.list[j])
+      num.string.list[j] = sum(num.temp)
+    }
+    names(num.string.list) = string.list
+  }
+  
+  # 29. A one-liner that removes all objects except for functions:
+  rm(list = setdiff(ls(), lsf.str()))
+  
+  # 30. some more random functions
+  {
+    # 1: To clear the console and clear the environment
+    {
+      # x == 1, only environment
+      # x == 2, console and environment
+      {
+        Cln.Env.Con <- function(x) {
+          switch(x,
+                 `1` = {
+                   rm(list = setdiff(ls(pos = ".GlobalEnv"),c("Cln.Env.Con")), pos = ".GlobalEnv") },
+                 `2` = {
+                   cat("\014")
+                   rm(list = setdiff(ls(pos = ".GlobalEnv"),c("Cln.Env.Con")), pos = ".GlobalEnv") })
+          # garbage cleaning
+          gc()
+        }
+      }
+    }
+    
+    # 2: To get the statistics on the unique values in a column/columns
+    {
+      # if x == 1, get the number of unique values in a column
+      # if x == 2, get the unique values in a column and store them in a variable
+      # if x == 3, get the number of unique values in all columns
+      # if x == 4, get the unique values in all columns and store them in a variable
+      count.unique <- function(df,x,y = "")
+      {
+        df.name = deparse(substitute(df))
+        df.y = paste0("df$",y)
+        
+        if (x == 1) {
+          unique.count.df.y <- data.frame(nrow(unique(data.frame(eval(parse(text = df.y))))))
+          colnames(unique.count.df.y) = c("#")
+          assign(paste("unique.count",df.name,y,sep = "."),unique.count.df.y,envir = .GlobalEnv)
+        }
+        
+        if (x == 2) {
+          unique.df.y <- unique(data.frame(eval(parse(text = df.y))))
+          colnames(unique.df.y) = c("Unique.Values")
+          assign(paste("unique",df.name,y,sep = "."),unique.df.y, envir = .GlobalEnv)
+        }
+        
+        if (x == 3) {
+          unique.count.df <- data.frame(rapply(as.list(df),function(x)length(unique(x))))
+          colnames(unique.count.df) = c("Unique.Table")
+          assign(paste("unique.count",df.name,sep = "."),unique.count.df,envir = .GlobalEnv)
+        }
+        
+        if (x == 4) {
+          unique.df <- sapply(df,function(x)unique(x))
+          unique.df = cbind.fill(unique.df)
+          assign(paste("unique",df.name,sep = "."),unique.df, envir = .GlobalEnv)
+        }
+      }
+      
+    }
+    
+    # 3: To get univariate statistics based on different techniques
+    {
+      # x == 1, "whatis" from YaleToolkit
+      # x == 2, "stat.desc" from pastecs (for continuous only)
+      # x == 3, "Hmisc.Describe"
+      #
+    }
+    
+    # 4: To get percentiles, deciles, quantiles
+    {
+      # x == 1, to get percentiles (from 10% to 100%, in increments of 10) for every continuous column in the dataframe
+      # x == 2, to get the quartiles (25%, 50%, 75%)
+      
+      tile.df <- function(df, x)
+      {
+        df_num <- df[ , (sapply(df, is.numeric))]
+        df_char <- df[ , (sapply(df, is.character))]
+        df.name = deparse(substitute(df))
+        
+        if (x == 1) {
+          percentiles_num <- data.frame(lapply(df_num, quantile, probs = seq(0,1,0.1), na.rm = T))
+          assign(paste(df.name, "percentiles", sep = "."), percentiles_num, envir = .GlobalEnv)
+        }
+        
+        if (x == 2) {
+          percentiles_num <- data.frame(lapply(df_num, quantile, na.rm = T))
+          assign(paste(df.name, "percentiles", sep = "."), percentiles_num, envir = .GlobalEnv)
+        }
+        
+        if (x == 3) {
+          
+        }
+      }
+    }
+  }
+  
+  # 31. 
 }
 
 
