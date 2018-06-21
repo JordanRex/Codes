@@ -115,11 +115,20 @@ cols_class_fn = function(x) {
   return(as.character(x))
 }
 
-# 7. mode function to fill NAs with mode of column
+# 7. NA treatment functions
+{
+# mode function to fill NAs with mode of column
 mode_fn = function(x) {
   y = attr(sort(table(x), decreasing = T)[1], which = "name")
   x[is.na(x)] = y
   return(x)
+}
+
+miss_treatment_categ_fn = function(x, y = "unknown") {
+  if (is.numeric(x)) x[which(is.na(x))] = mean(x, na.rm = T)
+  if (!is.numeric(x)) x[which(is.na(x))] = y
+  return(x)
+}
 }
 
 # 8. function to make numeric columns factors if unique values are less than n
@@ -250,6 +259,16 @@ view = function(x, title) {
     data[, -where, drop = FALSE]
   }
 }
+
+# 17. EDA function
+get_basic_eda_fn = function(df) {
+  DataExplorer::create_report(df)
+}
+
+# 18. remove columns with nearZero variance (existing function from caret)
+caret::nearZeroVar(x = train, freqCut = 10, uniqueCut = 20, names = T)
+
+# 19.
 }
 
 
