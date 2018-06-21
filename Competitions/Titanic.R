@@ -164,7 +164,7 @@
              cabin_count = if_else(is.na(cabin_count), 0, cabin_count))
 
     # view the nulls present
-    View(data.frame(col = colSums(is.na(train_test_new_v2))))
+    #View(data.frame(col = colSums(is.na(train_test_new_v2))))
   }
 
   # some random features
@@ -206,15 +206,15 @@
   # create the fully numeric matrix
   {
     # label encode and store all character columns for immediate modelling
-    categ_cols = train_test_new_v2 %>% select_if(is.character) %>% colnames
-    rem_cols = setdiff(colnames(train_test_new_v2), categ_cols)
+    categ_cols = train_test_new_v2 %>% select_if(is.character) %>% colnames %>% setdiff(., c("ticket_no", "Cabin"))
+    rem_cols = setdiff(colnames(train_test_new_v2), categ_cols) %>% setdiff(., c("ticket_no", "Cabin"))
 
     train_categ = train_test_new_v2 %>% select(categ_cols) %>% filter(tt == "train")
     test_categ = train_test_new_v2 %>% select(categ_cols) %>% filter(tt == "test")
     train_test_categ = bind_rows(train_categ, test_categ)
 
-    train_rest = train_test_new_v2 %>% select(rem_cols) %>% filter(tt == "train")
-    test_rest = train_test_new_v2 %>% select(rem_cols) %>% filter(tt == "test")
+    train_rest = train_test_new_v2 %>% select(rem_cols, tt) %>% filter(tt == "train")
+    test_rest = train_test_new_v2 %>% select(rem_cols, tt) %>% filter(tt == "test")
     train_test_rest = bind_rows(train_rest, test_rest)
 
     fn_labelencoder_df = function(x) {
@@ -232,14 +232,43 @@
     train_test_encoded = fn_labelencoder_df(train_test_categ) %>%
       mutate(tt = NULL) %>%
       bind_cols(., train_test_rest)
+
+    rm(train, test, test_categ, train_categ, test_rest, train_rest, train_test_new, train_test_rest, train_test, train_test_new_v2)
+    rm(age_bins_model, fare_bins_model, ticketno_bins_model, categ_cols, rem_cols, useless_cols, cols_to_retain)
    }
+
+  # high cardinality features (reduce overfitting)
+  {
+    # remove columns with high cardinality
+    # train_test_encoded %>%
+    #   summarise_all(n_distinct) %>%
+    #   melt %>%
+    #   View
+
+    rem_highcard_cols = function(x) {
+      temp = x
+      temp_rows = nrow(temp)
+      temp_cols = setdiff(colnames(temp), c("PassengerId", "tt"))
+
+      for (i in 1:length(temp_cols)) {
+        temp_len = length(unique(temp[, temp_cols[i], drop = T]))
+
+        if (temp_len > 0.4 * temp_rows) temp[, temp_cols[i]] = NULL
+      }
+      return(temp)
+    }
+
+    train_test_encoded = rem_highcard_cols(train_test_encoded)
+  }
 
   # PCA
   {
-    train_num_f = train_test_new_v2 %>%
+    train_num_f = train_test_encoded %>%
       filter(tt == "train") %>%
       mutate_all(.funs = as.numeric) %>% select(-PassengerId, -Survived, -tt)
-    test_num_f = test_1 %>% mutate_all(.funs = as.numeric) %>% select(-test_id)
+    test_num_f = train_test_encoded %>%
+      filter(tt == "test") %>%
+      mutate_all(.funs = as.numeric) %>% select(-PassengerId, -Survived, -tt)
 
     pca_feats = prcomp(x = train_num_f, retx = T, center = T, tol = 0, scale. = T)
     expl.var = round(pca_feats$sdev^2/sum(pca_feats$sdev^2)*100)
@@ -253,37 +282,41 @@
       plot(cumsum(prop_var), xlab = "PC", ylab = "Prop Var Exp", type = "b")
     }
 
-    pca_feats_to_be_added = data.frame(pca_feats$x[, 1:50])
-    train_2 %<>% cbind(., pca_feats_to_be_added)
+    pca_feats_to_be_added = data.frame(pca_feats$x[, 1:15])
+    train_num_f %<>% cbind(., pca_feats_to_be_added)
 
-    test_pca_pred = data.frame(predict(pca_feats, newdata = test_num_f) %>% .[, 1:50])
-    test_2 %<>% cbind(., test_pca_pred)
+    test_pca_pred = data.frame(predict(pca_feats, newdata = test_num_f) %>% .[, 1:15])
+    test_num_f %<>% cbind(., test_pca_pred)
 
-    rm(pca_feats, pca_feats_to_be_added, pca_var, expl.var, prop_var, std_dev, train_useless_cols, train_useless_cols_df, train_class_df, train_num_f, test_num_f, test_pca_pred)
+    train_test_encoded = bind_cols(train_test_encoded, bind_rows(pca_feats_to_be_added, test_pca_pred))
+    rm(pca_feats, pca_feats_to_be_added, pca_var, expl.var, prop_var, std_dev, test_pca_pred)
   }
 
   # ICA
   {
-    train_num_f = train_2 %>% mutate_all(.funs = as.numeric) %>% select(-train_id, -is_female) %>% scale
-    test_num_f = test_2 %>% mutate_all(.funs = as.numeric) %>% select(-test_id)
+    train_num_f = train_num_f %>% scale
+    test_num_f = test_num_f %>% scale
 
-    train_ica = fastICA(train_num_f, n.comp = 50, maxit = 50, verbose = T, tol = 1e-04)
+    train_ica = fastICA(train_num_f, n.comp = 20, maxit = 50, verbose = T, tol = 1e-04)
 
-    train_2 %<>% cbind(., train_ica$S %>% data.frame %>% set_colnames(paste0("ica_", 1:50)))
+    train_num_f %<>% cbind(., train_ica$S %>% data.frame %>% set_colnames(paste0("ica_", 1:20)))
 
-    train_ica_df = as.matrix(test_num_f) %*% train_ica$K %*% train_ica$W %>%
+    test_ica_df = as.matrix(test_num_f) %*% train_ica$K %*% train_ica$W %>%
       data.frame %>%
-      set_colnames(paste0("ica_", 1:50))
-    test_2 %<>% cbind(., train_ica_df)
+      set_colnames(paste0("ica_", 1:20))
+    test_num_f %<>% cbind(., test_ica_df)
 
-    rm(train_num_f, test_num_f, train_ica_df, train_ica)
+    train_test_encoded = bind_cols(train_test_encoded, bind_rows(train_ica$S %>% data.frame %>% set_colnames(paste0("ica_", 1:20)),
+                                                                 test_ica_df))
+    rm(train_num_f, test_num_f, test_ica_df, train_ica)
   }
 
   # DEVIATION_ENCODING
   {
     # function to compute the deviation encoded features
     categtoDeviationenc = function(char_data,
-                                   num_data)
+                                   num_data,
+                                   dep = "Survived")
     {
       train_char_data = char_data %>% data.frame() %>% mutate_all(as.character)
       train_num_data = num_data %>% data.frame() %>% mutate_all(as.character) %>% mutate_all(as.numeric)
@@ -298,59 +331,101 @@
 
         temp = train_char_data[, i, drop = F] %>%
           cbind(., train_num_data) %>%
-          group_by_at(vars(-matches("is_female"))) %>%
-          mutate(mean = mean(is_female),
-                 sd = sd(is_female),
-                 median = median(is_female)) %>%
+          group_by_at(vars(-matches(dep))) %>%
+          mutate(mean = mean(Survived),
+                 sd = sd(Survived),
+                 median = median(Survived)) %>%
           ungroup %>%
           select(temp_col, mean, sd, median) %>%
           set_colnames(temp_cols) %>%
-          distinct %>%
-          mutate_all(as.numeric)
+          distinct
 
-        train_2 <<- left_join(train_2, temp)
-        test_2 <<- left_join(test_2, temp)
+        train_categ <<- left_join(train_categ, temp)
+        test_categ <<- left_join(test_categ, temp)
       }
 
-      return(print("train_2 and test_2 have been generated"))
+      return(print("train and test have been generated"))
     }
 
-    categ_variables = train_cols_df_2 %>%
-      filter(COUNT_DISTINCT_RANK == "categ" | COUNT_DISTINCT_RANK == "rem_factors") %>%
-      .$COLUMN
+    train_test_categ %<>% bind_cols(., train_test_encoded[, "Survived"])
+    train_categ = train_test_categ %>% filter(tt == "train")
+    test_categ = train_test_categ %>% filter(tt == "test")
+    categtoDeviationenc(char_data = train_categ %>% select(-Survived, -tt), num_data = train_categ %>% select(Survived))
 
-    categtoDeviationenc(char_data = train_2 %>% select(categ_variables), num_data = train_2 %>% select(is_female))
+    train_test_categ = bind_rows(train_categ, test_categ) %>%
+      .[9:18]
+
+    train_test_encoded %<>% bind_cols(., train_test_categ)
+
+    rm(train_categ, test_categ)
   }
 }
 
 # Feature-Selection
 {
-  train_xgb = xgb.DMatrix(data = data.matrix(train_2 %>% select(-is_female, -train_id)), label = data.matrix(as.numeric(train_2[,'is_female'])))
+  train_dep = train_test_encoded %>% filter(tt == "train") %>% select(Survived, PassengerId)
+  train_test_encoded$Survived = NULL
+
+  #View(data.frame(x = colSums(is.na(train_test_encoded))))
+
+  # remove columns with large number of nulls
+  rem_null_cols = function(x) {
+    mean(is.na(x)) < 0.3
+  }
+  train_test_encoded %<>% select_if(rem_null_cols)
+
+  # treat nans in dataframe
+  treat_nan = function(x) {
+    x = as.numeric(x)
+    x = replace(x, is.na(x), mean(x, na.rm = T))
+    }
+  num_cols = setdiff(colnames(train_test_encoded), c("tt"))
+  train_test_encoded %<>%
+    ungroup %>%
+    mutate_if(.predicate = colnames(.) %in% num_cols,
+              .funs = treat_nan)
+
+  # split into train and test
+  train = train_test_encoded %>% filter(tt == "train") %>% select(-tt, -PassengerId)
+  test = train_test_encoded %>% filter(tt == "test") %>% select(-tt, -PassengerId)
+
+  train_xgb = xgb.DMatrix(data = data.matrix(train), label = data.matrix(train_dep$Survived))
 
   xgb_feat_selection_model = xgboost(data = train_xgb,
-                                     nrounds = 500,
-                                     eta = 0.01,
-                                     objective = "binary:logistic",
-                                     verbose = 1,
-                                     max_depth = 12,
-                                     print_every_n = 50,
-                                     early_stopping_rounds = 5)
+                                    nrounds = 100,
+                                    eta = 0.001,
+                                    objective = "binary:logistic",
+                                    verbose = 1,
+                                    max_depth = 5,
+                                    print_every_n = 50,
+                                    eval_metric = "auc",
+                                    subsample = 0.5,
+                                    colsample_bytree = 0.2,
+                                    booster = "gbtree",
+                                    gamma = 0.2,
+                                    early_stopping_rounds = 5)
 
-  xgb_importance = data.table(xgboost::xgb.importance(feature_names = setdiff(colnames(train_2), c("is_female", "train_id")),
+  xgb_importance = data.table(xgboost::xgb.importance(feature_names = colnames(train),
                                                       model = xgb_feat_selection_model))
 
   Importance_table = data.frame(Feature = xgb_importance$Feature, Importance = xgb_importance$Gain) %>%
     mutate(Rank = dense_rank(desc(Importance))) %>%
-    filter(Rank <= 350)
+    filter(Rank <= 50)
   colnames_features_brands = as.vector(Importance_table$Feature)
 
-
   ## subset for the required columns alone
-  train_3 = train_2 %>% select(append(colnames_features_brands, c("is_female", "train_id")))
-  test_3 = test_2 %>% select(append(colnames_features_brands, c("test_id")))
+  train = train_test_encoded %>%
+    filter(tt == "train") %>%
+    select(colnames_features_brands)
+  test = train_test_encoded %>%
+    filter(tt == "test") %>%
+    select(colnames_features_brands)
 
-  rm(xgb_feat_selection_model, xgb_importance, train_df_summary)
+  rm(xgb_feat_selection_model, xgb_importance, train_test_categ, train_test_encoded)
 }
+
+#save.image("backup.RData")
+load("backup.RData")
 
 # Processing - Ranger
 {
@@ -360,55 +435,53 @@
     factor_fn = function(x) {
       unique_temp = length(unique(x))
 
-      if (unique_temp <= 53) {
+      if (unique_temp <= 50) {
         x = as.factor(x)
       } else {
         x = as.numeric(x)
       }
     }
 
-    train_3 %<>%
-      mutate_all(factor_fn) %>%
-      mutate(is_female = as.numeric(as.character(is_female)))
-
-    test_3 %<>%
+    train %<>%
       mutate_all(factor_fn)
+
+    test %<>%
+      mutate_all(factor_fn)
+
+    # train %<>%
+    #   mutate_all(as.numeric)
+    #
+    # test %<>%
+    #   mutate_all(as.numeric)
   }
 }
 
 # Modelling - Ranger
 {
-  # the final treated datasets are train_3 and test_3
-  # creating their equivalents without the id columns and a dummy dependant in test for predictions
-  train_4 = train_3 %>%
-    mutate(train_id = NULL)
-  test_4 = test_3 %>%
-    mutate(test_id = NULL,
-           is_female = 0)
-
-  test_rows = sample(nrow(train_3), size = ceiling(0.6 * nrow(train_3)), replace = F)
-  train_temp = train_4[test_rows, ] %>% mutate_if(is.factor, droplevels)
-  test_temp = train_4[-test_rows, ] %>%
-    mutate(is_female = 0) %>% mutate_if(is.factor, droplevels)
-
-  actual_train_test = train_3[-test_rows, ] %>% select(test_id = train_id, is_female_act = is_female)
+  train %<>% bind_cols(., train_dep)
+  test_rows = sample(nrow(train), size = ceiling(0.6 * nrow(train)), replace = F)
+  train_temp = train[test_rows, ] %>% mutate_if(is.factor, droplevels)
+  test_temp = train[-test_rows, ] %>% mutate_if(is.factor, droplevels)
 
   accuracy_grid_1 = data.frame(model = "", accuracy = "", num_trees = "", mtry = "", stringsAsFactors = F)
 
-  ranger_grid = expand.grid(num_trees = c(350, 500, 1000),
-                            mtry = c(ceiling(ncol(train_3)/3), ceiling(ncol(train_3)/2)))
+  ranger_grid = expand.grid(num_trees = c(25, 50, 75, 100, 200),
+                            mtry = c(ceiling(ncol(train)/10), ceiling(ncol(train)/7), ceiling(ncol(train)/5), ceiling(ncol(train)/3), ceiling(ncol(train)/2)))
 
-  output_grid = data.frame(ID = actual_train_test$test_id)
+  output_grid = data.frame(ID = test_temp$PassengerId, dep = test_temp$Survived)
+
+  train_temp %<>% select(-PassengerId) %>% mutate(Survived = as.factor(Survived))
+  test_temp %<>% select(-PassengerId, -Survived)
 
   for (i in 1:nrow(ranger_grid)) {
     num_trees_temp = ranger_grid[i, 1]
     mtry_temp = ranger_grid[i, 2]
 
-    model = ranger::ranger(is_female ~ ., num.trees = num_trees_temp, mtry = mtry_temp, splitrule = "gini", data = train_temp, probability = T, respect.unordered.factors = T)
+    model = ranger::ranger(Survived ~ ., num.trees = num_trees_temp, mtry = mtry_temp, splitrule = "gini", data = train_temp, probability = T, respect.unordered.factors = T, min.node.size = 3, verbose = T)
 
     output = data.frame(predict(model, test_temp)[1]) %>%
       select(predictions.1) %>%
-      set_colnames("is_female")
+      set_colnames("survived")
     output = cbind(data.frame(test_id = actual_train_test$test_id), output) %>%
       left_join(., actual_train_test) %>%
       mutate(prediction = if_else(is_female > 0.5 & is_female_act == 1, 1,
@@ -567,83 +640,4 @@
 {
   output_1 = read.csv('output_1.csv', header = T, stringsAsFactors = F)
   output_2 = read.csv('output_2.csv', header = T, stringsAsFactors = F)
-}
-
-# the nnet segment
-{
-
-## Partitioning Data into Train and Test datasets in 70:30
-library(caret)
-set.seed(1234567)
-train1<-createDataPartition(bank_full$subscribed,p=0.7,list=FALSE)
-train<-bank_full[train1,]
-test<-bank_full[-train1,]
-
-## CLASSIFICATION USING NEURAL NETWORK
-
-library(nnet)
-
-## 1. Fit a Single Hidden Layer Neural Network using Least Squares
-train.nnet<-nnet(subscribed~.,train,size=3,rang=0.07,Hess=FALSE,decay=15e-4,maxit=250)
-## Use TEST data for testing the trained model
-test.nnet<-predict(train.nnet,test,type=("class"))
-## MisClassification Confusion Matrix
-table(test$subscribed,test.nnet)
-## One can maximize the Accuracy by changing the "size" while training the neural network. SIZE refers to the number of nodes in the hidden layer.
-which.is.max(test.nnet)  ## To Fine which row break ties at random (Maximum position in vector)
-
-##2. Use Multinomial Log Linear models using Neural Networks
-train.mlln<-multinom(subscribed~.,train)
-##USe TEST data for testing the trained model
-test.mlln<-predict(train.mlln,test)
-##Misclassification or Confusion Matrix
-table(test$subscribed,test.mlln)
-##3. Training Neural Network Using BACK PROPOGATION
-install.packages("neuralnet")
-library(neuralnet)
-## Check for all Input Independent Variables to be Integer or Numeric or complex matrix or vector arguments. If they are not any one of these, then tranform them accordingly
-str(train)
-str(test)
-## It can be observed that all are either integer or factor. Now these factors have to be transformed to numeric.
-## One cannot use directly as.numeric() to convert factors to numeric as it has limitations.
-## First, Lets convert factors having character levels to numeric levels
-str(bank_full)
-bank_full_transform<-bank_full
-bank_full_transform$marital=factor(bank_full_transform$marital,levels=c("single","married","divorced"),labels=c(1,2,3))
-str(bank_full_transform)
-## Now convert these numerical factors into numeric
-bank_full_transform$subscribed<-as.numeric(as.character(bank_full_transform$subscribed))
-
-str(bank_full_transform)
-## Now all the variables are wither intergers or numeric
-## Now we shall partition the data into train and test data
-library(caret)
-set.seed(1234567)
-train2<-createDataPartition(bank_full_transform$subscribed,p=0.7,list=FALSE)
-trainnew<-bank_full_transform[train2,]
-testnew<-bank_full_transform[-train2,]
-str(trainnew)
-str(testnew)
-## Now lets run the neuralnet model on Train dataset
-trainnew.nnbp<-neuralnet(subscribed~age+balance+lastday+lastduration+numcontacts+pdays+pcontacts+marital+education+housingloan+personalloan+lastmonth+poutcome+lastcommtype,data=bank_full_transform,hidden=5,threshold=0.01,err.fct="sse",linear.output=FALSE,likelihood=TRUE,stepmax=1e+05,rep=1,startweights=NULL,learningrate.limit=list(0.1,1.5),learningrate.factor=list(minus=0.5,plus=1.5),learningrate=0.5,lifesign="minimal",lifesign.step=1000,algorithm="backprop",act.fct="logistic",exclude=NULL,constant.weights=NULL)
-## Here, Back Propogation Algorithm has been used. One can also use rprop+ (resilient BP with weight backtracking),rprop- (resilient BP without weight backtracking), "sag and "slr" as modified global convergent algorithm
-## Accordingly the accuracy can be checked for each algorithm
-summary(train.nnbp)
-## Plot method for the genralised weights wrt specific covariate (independent variable) and response target variable
-gwplot(trainnew.nnbp,selected.covariate="balance")
-##(Smoother the Curve- Better is the model prediction)
-## Plot the trained Neural Network
-plot(trainnew.nnbp,rep="best")
-## To check your prediction accuracy of training model
-prediction(trainnew.nnbp)
-print(trainnew.nnbp)
-## Now use the TEST data set to test the trained model
-## Make sure that target column in removed from the test data set
-columns=c("age","job","marital","education","balance","housingloan","personalloan","lastcommtype","lastday","lastmonth","lastduration","numcontacts","pdays","poutcome")
-testnew2<-subset(testnew,select=columns)
-testnew.nnbp<-compute(trainnew.nnbp,testnew2,rep=1)
-## MisClassification Confusion Matrix
-table(testnew$subscribed,testnew.nnbp$net.result)
-cbind(testnew$subscribed,testnew.nnbp$net.result)
-print(testnew.nnbp)
 }
