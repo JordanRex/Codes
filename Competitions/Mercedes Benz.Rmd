@@ -1,0 +1,483 @@
+---
+title: "KAGGLE - BENZ"
+output: html_notebook
+---
+
+```{r Initialization}
+gc()
+setwd("~/KAGGLE/Benz")
+cat("\014")
+rm(list = setdiff(ls(), c()))
+
+packages = function(x) {
+  x = as.character(match.call()[[2]])
+  if (!require(x,character.only = TRUE)){
+    install.packages(pkgs = x, repos = "http://cran.r-project.org")
+    require(x, character.only = TRUE)
+  }
+}
+
+suppressMessages(
+{
+  packages("tidyverse")
+  packages("dtplyr")
+  packages("xgboost")
+  packages("ranger")
+  packages("magrittr")
+  packages("qdapTools")
+  packages("matrixStats")
+})
+```
+
+```{r The Beginning}
+train = read.table(file = "train.csv", header = T, sep = ",", stringsAsFactors = F, quote = "")
+
+test = read.table(file = "test.csv", header = T, sep = ",", as.is = T, quote = "")
+
+sample = read.table(file = "sample_submission.csv", header = T, sep = ",", as.is = T, quote = "")
+```
+
+```{r EDA}
+length(unique(train$ID))
+length(unique(test$ID))
+
+cat("\n\n")
+
+sum(is.na(train))
+sum(is.na(test))
+
+cat("\n\n")
+
+colSums(is.na(train))
+cat("\n\n")
+colSums(is.na(test))
+```
+
+```{r PCA}
+train_num_f = train %>% select_if(.predicate = is.integer) %>% mutate_all(.funs = as.numeric)
+test_num_f = test %>% select_if(.predicate = is.integer) %>% mutate_all(.funs = as.numeric)
+
+ads_PCA = bind_rows(train_num_f, test_num_f)
+
+pca_feats = prcomp(x = ads_PCA)
+
+std_dev = pca_feats$sdev
+pca_var = std_dev^2
+
+prop_var = pca_var/sum(pca_var)
+
+plot(cumsum(prop_var), xlab = "PC", ylab = "Prop Var Exp", type = "b")
+
+pca_feats_to_be_added = data.frame(pca_feats$x[, 1:300])
+
+ads_PCA %<>% cbind(pca_feats_to_be_added)
+```
+
+```{r Kid Model - Validation with 70/30 split. Selecting best parameter for initial rough submission}
+trainX = train %>% mutate_if(.predicate = is.character,
+                     .funs = as.factor) %>% select(-ID)
+
+testX = test %>% mutate_if(.predicate = is.character,
+                     .funs = as.factor) %>% select(-ID)
+
+## 50% of the sample size
+smp_size <- floor(0.50 * nrow(trainX))
+
+## set the seed to make your partition reproductible
+set.seed(1)
+train_indices <- sample(seq_len(nrow(trainX)), size = smp_size)
+
+train_x <- trainX[train_indices, ]
+test_x <- trainX[-train_indices, ]
+
+# looping through to find the best model
+parameter_grid = expand.grid(num_trees = c(10, 100, 200),
+                             mtry = c(5, 10, 20),
+                             splitrule = c("variance", "extratrees"),
+                             stringsAsFactors = F)
+
+accuracy = data.frame(model = 0,
+                      num_trees = 0,
+                      mtry = 0,
+                      splitrule = c("0"),
+                      accuracy = 0,
+                      order = 0,
+                      stringsAsFactors = F)
+
+for (i in 1:nrow(parameter_grid))
+{
+ranger_model = ranger::ranger(formula = y ~ .,
+                              data = train_x,
+                              num.trees = parameter_grid[i, 1],
+                              mtry = parameter_grid[i, 2],
+                              splitrule = parameter_grid[i, 3],
+                              respect.unordered.factors = T)
+
+output = data.frame(pred = predict(ranger_model, test_x)$predictions)
+output$actuals = test_x$y
+
+output %<>% mutate(error = 100*(abs(actuals - pred))/actuals,
+                   flag = if_else(error < 5, 1, 0))
+
+accuracy[i, 1] = paste0("Model_", i)
+accuracy[i, 2] = parameter_grid[i, 1]
+accuracy[i, 3] = parameter_grid[i, 2]
+accuracy[i, 4] = parameter_grid[i, 3]
+accuracy[i, 5] = round(100 - (100*(abs(sum(output$actuals) - sum(output$pred)))/sum(output$actuals)), digits = 3)
+accuracy[i, 6] = sum(output$flag)
+
+cat(paste0("Model_", i))
+cat("\n\n")
+}
+
+View(accuracy)
+```
+
+```{r Kid Model - Sample submission}
+ensemble_grid = accuracy %>%
+  select(num_trees, mtry, splitrule, order) %>%
+  mutate(rank = dense_rank(desc(order))) %>%
+  filter(rank < 11) %>%
+  select(num_trees, mtry, splitrule)
+
+final_output = data.frame(ID = test$ID,
+                          stringsAsFactors = F)
+
+for (i in 1:nrow(ensemble_grid)) {
+ranger_model = ranger::ranger(formula = y ~ .,
+                              data = trainX,
+                              num.trees = ensemble_grid[i, 1],
+                              mtry = ensemble_grid[i, 2],
+                              splitrule = ensemble_grid[i, 3],
+                              respect.unordered.factors = T)
+
+y_name = paste0("y_", i)
+output = data.frame(y = predict(ranger_model, testX)$predictions)
+output %<>% cbind(test[, "ID", drop = F]) %>% 
+  select(ID, y) %>% 
+  mutate(y = round(y, digits = 4))  %>% 
+  rename_(.dots = setNames(colnames(.), c("ID", y_name)))
+
+final_output %<>% cbind(output[, 2, drop = F], stringsAsFactors = F)
+}
+
+final_output %<>% 
+  mutate(y = max(starts_with("y_"))) %>%
+  select(ID, y)
+
+write.csv("mercedes_benz_varunrajan_4.csv", x = final_output, row.names = F)
+```
+
+```{r xgboost 1 - creating the test/train sets and defining the eval metric}
+ads = bind_rows(train, test)
+cols = setdiff(colnames(ads), colnames(ads_PCA))
+
+ads %<>% select_(.dots = cols)
+ads = bind_cols(ads, ads_PCA)
+
+r2_metric = function(preds, train_x) {
+    labels = getinfo(train_x, "label")
+    r2 = 1 - (sum((labels - preds )^2)/sum((labels-mean(labels))^2))
+    list(metric = "r2", value = r2)
+}
+```
+
+```{r Remove dfs}
+rm(ads_PCA, pca_feats, pca_feats_to_be_added, test_num_f, train_num_f)
+```
+
+```{r some feature engineering}
+train_ids = data.frame(ID = unique(train$ID))
+test_ids = data.frame(ID = unique(test$ID))
+
+train_x = inner_join(ads, train_ids)
+test_x = inner_join(ads, test_ids)
+
+train_x_categ = train_x[, 1:9, drop = F]
+
+factorToNumeric <- function(train, test, response, variables, metrics){
+  temp <- data.frame(c(rep(0,nrow(test))), row.names = NULL)
+
+  for (variable in variables){
+    for (metric in metrics) {
+      x <- tapply(train[, response], train[, variable], metric)
+      x <- data.frame(row.names(x),x, row.names = NULL)
+      temp <- data.frame(temp,round(lookup(test[,variable], x),2))
+      colnames(temp)[ncol(temp)] <- paste(metric,variable, sep = "_")
+    }
+  }
+  return(temp[,-1])
+}
+
+x_cols = train_x_categ %>% select(starts_with("X")) %>% colnames()
+
+train_x_categ_feats = factorToNumeric(train_x_categ, train_x_categ, "y", x_cols, c("mean", "median", "sd"))
+
+train_x_categ %<>% cbind(train_x_categ_feats)
+
+for (i in 1:length(x_cols)) {
+  x = train_x_categ %>% select(contains(x_cols[i])) %>% distinct()
+  test_x %<>% left_join(x)
+  rm(x)
+}
+
+train_x %<>% cbind(train_x_categ_feats)
+
+ads = bind_rows(train_x, test_x)
+train = inner_join(ads, train_ids)
+test = inner_join(ads, test_ids)
+
+rm(train_x, test_x, train_x_categ, train_x_categ_feats, pca_var, prop_var, std_dev, x_cols, cols, i)
+```
+
+```{r feature selection with the PCA components}
+# set number of iterations (random sampling)
+iter = 20
+
+Imp = data.frame(Feature = c(""),
+                 rank = 0,
+                 stringsAsFactors = F)
+
+# convert character into numeric for xgboost
+features = colnames(ads) %>% setdiff(c("y", "ID"))
+for (f in features) {
+  if (is.character(ads[[f]])) {
+    levels = sort(unique(ads[[f]]))
+    ads[[f]] = as.numeric(factor(ads[[f]],levels = levels))
+  }
+}
+
+for (i in 1:iter)
+{
+set.seed(i)
+
+train_ids = data.frame(ID = unique(train$ID))
+test_ids = data.frame(ID = unique(test$ID))
+
+train_x = inner_join(ads, train_ids)
+
+  ## 10% of the sample size
+  smp_size <- floor(0.10 * nrow(train_x))
+  
+  train_indices <- sample(seq_len(nrow(train_x)), size = smp_size)
+
+  train_xx = train_x[train_indices, ]
+  test_xx = train_x[-train_indices, ]
+  
+  feats = colnames(train_xx) %>% setdiff(c("y"))
+  
+  test_xy = data.frame(ID = test_xx$ID, y = test_xx$y)
+  
+  train_xx = xgb.DMatrix(as.matrix(train_xx %>% select(-y)), label = train_xx[, "y"])
+  test_xx = xgb.DMatrix(as.matrix(test_xx %>% select(-y)))
+  
+  xgboost_model = xgboost(train_xx, nrounds = 500, eta = 0.01, verbose = 1, print_every_n = 50, subsample = 0.7, colsample_bytree = 0.7, max_depth = 3, eval_metric = r2_metric, early_stopping_rounds = 10, maximize = T, booster = "gbtree", objective = "reg:linear")
+
+data.table::as.data.table(xgboost::xgb.importance(feature_names = feats, model = xgboost_model)) %>%
+  xgboost::xgb.plot.importance(rel_to_first = T, top_n = 25)
+
+Imp_x = data.table::as.data.table(xgboost::xgb.importance(feature_names = feats, model = xgboost_model)) %>%
+  data.frame() %>%
+  mutate(rank = dense_rank(desc(Gain))) %>%
+  filter(rank <= 50) %>%
+  select(Feature, rank)
+
+Imp = bind_rows(Imp, Imp_x)
+}
+
+Imp_feats = Imp %>%
+  group_by(Feature) %>%
+  mutate(score = 50 - rank + 1) %>%
+  summarise(rank_count = n(),
+            score = sum(score)) %>%
+  ungroup() %>%
+  mutate(rank = dense_rank(desc(score))) %>%
+  filter(rank < 301)
+```
+
+```{r removing some dfs}
+rm(Imp_x, Imp, test_xy, train_x, train_xx, levels, smp_size, xgboost_model, test_xx, train_indices, iter, feats, features)
+```
+
+```{r Model grid search with selected features}
+feats = append(Imp_feats$Feature, c("ID", "y")) %>% setdiff(c("")) %>% unique()
+
+saveRDS(feats, "selected_feats.rds")
+feats = read_rds("selected_feats.rds")
+
+  #convert character into numeric for xgboost
+features = colnames(ads) %>% setdiff(c("y", "ID"))
+for (f in features) {
+  if (is.character(ads[[f]])) {
+    levels = sort(unique(ads[[f]]))
+    ads[[f]] = as.numeric(factor(ads[[f]],levels = levels))
+  }
+}
+
+ads = ads[, colnames(ads) %in% feats]
+
+train_ids = data.frame(ID = unique(train$ID))
+test_ids = data.frame(ID = unique(test$ID))
+
+train_x = inner_join(ads, train_ids)
+test_x = inner_join(ads, test_ids)
+
+# looping through to find the best model
+parameter_grid = expand.grid(nrounds = c(10, 50, 100, 250, 500, 1000),
+                             eta = c(0.005, 0.01, 0.05, 0.1, 0.5),
+                             maxdepth = c(2, 3, 4, 5, 6, 7),
+                             stringsAsFactors = F)
+
+accuracy = data.frame(model = 0,
+                      rounds = 0,
+                      eta = 0,
+                      maxdepth = 0,
+                      r2 = 0,
+                      stringsAsFactors = F)
+
+set.seed(123)
+
+for (i in 1:nrow(parameter_grid)) {
+  
+  ## 50% of the sample size
+  smp_size <- floor(0.5 * nrow(train_x))
+  
+  train_indices <- sample(seq_len(nrow(train_x)), size = smp_size)
+
+  train_xx = train_x[train_indices, ]
+  test_xx = train_x[-train_indices, ]
+  
+  feats = colnames(train_xx) %>% setdiff(c("y"))
+  
+  test_xy = data.frame(ID = test_xx$ID, y = test_xx$y)
+  
+  train_xx = xgb.DMatrix(as.matrix(train_xx %>% select(-y)), label = train_xx[, "y"])
+  test_xx = xgb.DMatrix(as.matrix(test_xx %>% select(-y)))
+  
+  xgboost_model = xgboost(train_xx, nrounds = parameter_grid[i, 1], eta = parameter_grid[i, 2], verbose = 1, print_every_n = 50, subsample = 0.8, colsample_bytree = 0.8, max_depth = parameter_grid[i, 3], eval_metric = r2_metric, early_stopping_rounds = 10, maximize = T, booster = "gbtree", objective = "reg:linear")
+  
+output = data.frame(ID = test_xy$ID,
+                    pred = predict(xgboost_model, test_xx),
+                    stringsAsFactors = F) %>%
+  cbind(test_xy[, "y", drop = F])
+
+  r2 = output %>%
+    summarise(r2sqr = 1 - (sum((y - pred)^2)/sum((y - mean(y))^2)))
+  
+  accuracy[i, 1] = paste0("model_", i)
+  accuracy[i, 2] = parameter_grid[i, 1]
+  accuracy[i, 3] = parameter_grid[i, 2]
+  accuracy[i, 4] = parameter_grid[i, 3]
+  accuracy[i, 5] = r2
+  
+  print(paste0("Model_", i))
+}
+```
+
+```{r Final model and prediction}
+ensemble_grid = accuracy %>%
+  select(rounds, eta, maxdepth, r2) %>%
+  mutate(rank = dense_rank(desc(r2))) %>%
+  filter(rank < 21) %>%
+  select(rounds, eta, maxdepth)
+
+final_output = data.frame(ID = test$ID,
+                          stringsAsFactors = F)
+
+train_x = inner_join(ads, train_ids)
+test_x = inner_join(ads, test_ids)
+
+train_xx = xgb.DMatrix(as.matrix(train_x %>% select(-y)), label = train_x[, "y"])
+test_xx = xgb.DMatrix(as.matrix(test_x %>% select(-y)))
+  
+for (i in 1:nrow(ensemble_grid)) {
+xgboost_model = xgboost(data = train_xx,
+                        nrounds = ensemble_grid[i, 1],
+                        eta = ensemble_grid[i, 2],
+                        max_depth = ensemble_grid[i, 3],
+                        verbose = T,
+                        print_every_n = 50,
+                        early_stopping_rounds = 10,
+                        subsample = 0.9,
+                        colsample_bytree = 0.9,
+                        eval_metric = r2_metric,
+                        maximize = T)
+
+y_name = paste0("y_", i)
+output = data.frame(y = predict(xgboost_model, test_xx))
+output %<>% cbind(test_x[, "ID", drop = F]) %>% 
+  select(ID, y) %>% 
+  mutate(y = round(y, digits = 4))  %>% 
+  rename_(.dots = setNames(colnames(.), c("ID", y_name)))
+
+final_output %<>% cbind(output[, 2, drop = F], stringsAsFactors = F)
+}
+
+cols = final_output %>% select(starts_with("y_")) %>% colnames(.)
+
+# for mean across columns
+final_output_x = final_output %>%
+  mutate(y = rowMeans(.[, 2:21])) %>%
+  select(ID, y)
+
+write.csv('mercedes_benz_varunrajan_13.csv', x = final_output_x, row.names = F)
+```
+
+```{r adding ranger output as well}
+train_x = train_x
+test_x = test_x
+ads = bind_rows(train_x, test_x) %>% mutate_if(is.factor, as.numeric)
+
+ads = as.matrix(ads)
+indx = which(is.na(ads), arr.ind = TRUE)
+ads[indx] = matrixStats::colMedians(ads, na.rm = TRUE)[indx[, 2]]
+
+ads = as.data.frame(ads)
+
+for (i in 2:7) {
+  ads[, i] = as.factor(ads[, i])
+}
+
+train_x = inner_join(ads, train_ids)
+test_x = inner_join(ads, test_ids)
+
+final_output_ranger = data.frame(ID = test$ID,
+                          stringsAsFactors = F)
+
+parameter_grid = expand.grid(num_trees = c(10, 100, 200),
+                             mtry = c(5, 10, 20),
+                             splitrule = c("variance", "extratrees"),
+                             stringsAsFactors = F)
+
+for (i in 1:nrow(parameter_grid)) {
+ranger_model = ranger::ranger(formula = y ~ .,
+                              data = train_x,
+                              num.trees = parameter_grid[i, 1],
+                              mtry = parameter_grid[i, 2],
+                              splitrule = parameter_grid[i, 3],
+                              respect.unordered.factors = T)
+
+y_name = paste0("y_ranger_", i)
+output = data.frame(y = predict(ranger_model, test_x)$predictions)
+output %<>% cbind(test_x[, "ID", drop = F]) %>% 
+  select(ID, y) %>% 
+  mutate(y = round(y, digits = 4))  %>% 
+  rename_(.dots = setNames(colnames(.), c("ID", y_name)))
+
+final_output_ranger %<>% cbind(output[, 2, drop = F], stringsAsFactors = F)
+}
+
+# for mean across columns
+final_output_x = final_output_ranger %>%
+  mutate(y = rowMeans(.[, 2:19])) %>%
+  select(ID, y)
+
+final_final_output = cbind(final_output, final_output_ranger %>% select(-ID))
+
+# for mean across columns
+final_output_x = final_final_output %>%
+  mutate(y = rowMeans(.[, 2:39])) %>%
+  select(ID, y)
+
+write.csv('mercedes_benz_varunrajan_15.csv', x = final_output_x, row.names = F)
+```
