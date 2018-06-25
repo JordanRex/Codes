@@ -784,12 +784,12 @@ xgbfi <- function(xgbfi_path = 'code/xgbfi/bin/XgbFeatureInteractions.exe', # ne
   
   # 2. text2vec function
   {
-    text2vec_fn = function(x1, x2, y, vocab_term_max_n = 300, ngram_max = 3) {
+    text2vec_fn = function(x1, x2 = NULL, vocab_term_max_n = 300, ngram_max = 3) {
       # define preprocessing function and tokenization function
       prep_fun = tolower
       tok_fun = word_tokenizer
       
-      it_train = itoken(x1[, y],
+      it_train = itoken(x1$nlp_feat,
                         preprocessor = prep_fun,
                         tokenizer = tok_fun,
                         ids = x1$id,
@@ -806,8 +806,9 @@ xgbfi <- function(xgbfi_path = 'code/xgbfi/bin/XgbFeatureInteractions.exe', # ne
       # fit model to train data and transform train data with fitted model
       dtm_train_tfidf <<- fit_transform(dtm_train, tfidf)
       
+      if (!is.null(x2)) {
       # fit for test now
-      it_test = itoken(x2[, y],
+      it_test = itoken(x2$nlp_feat,
                        preprocessor = prep_fun,
                        tokenizer = tok_fun,
                        ids = x2$id,
@@ -816,6 +817,7 @@ xgbfi <- function(xgbfi_path = 'code/xgbfi/bin/XgbFeatureInteractions.exe', # ne
       # apply pre-trained tf-idf transformation to test data
       dtm_test_tfidf = create_dtm(it_test, vectorizer)
       dtm_test_tfidf <<- fit_transform(dtm_test_tfidf, tfidf)
+      }
       
       return("all ok")
     }
