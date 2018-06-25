@@ -64,8 +64,8 @@
   
   # 4. stopwords for NLP
   all_stopwords_fn = function(x = NULL) {
-    x = stopwords(kind = "en") %>%
-      append(., stop_words$word) %>%
+    x = tm::stopwords(kind = "en") %>%
+      append(., tidytext::stop_words$word) %>%
       append(., stopwords::data_stopwords_smart$en) %>%
       append(., stopwords::data_stopwords_stopwordsiso$en) %>%
       stemDocument(language = "english") %>%
