@@ -63,7 +63,7 @@
   }
   
   # 4. stopwords for NLP
-  all_stopwords_fn = function(x = NULL) {
+  all_stopwords_fn = function() {
     x = tm::stopwords(kind = "en") %>%
       append(., tidytext::stop_words$word) %>%
       append(., stopwords::data_stopwords_smart$en) %>%
@@ -774,8 +774,7 @@ xgbfi <- function(xgbfi_path = 'code/xgbfi/bin/XgbFeatureInteractions.exe', # ne
         removeNumbers %>%
         removePunctuation %>%
         stemDocument %>%
-        gsub(., pattern = all_stopwords_pat_1, replacement = " ", ignore.case = T) %>%
-        gsub(., pattern = all_stopwords_pat_2, replacement = "", ignore.case = T) %>%
+        gsub(., pattern = all_stopwords, replacement = "", ignore.case = T) %>%
         str_trim %>%
         str_squish
       
