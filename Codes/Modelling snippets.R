@@ -2,6 +2,9 @@
 # ML snippets #
 # model functions (for ranger, xgboost, h2o - gbm/randomforest/dnn)
 # feature manipulation functions (for PCA, ICA, deviation encoding, bucketing, feature selection)
+
+# Basic steps are to pre-process train and test data and split the response variable into a separate vector
+# have only the independant features for use in modelling as part of the train and test (no id, response vars)
 ######################
 
 ## XGBOOST ##
@@ -13,43 +16,39 @@
 # most general params declared with arguments
 
 # xgboost function
-xgb_model_fn = function(x, nround = 1000, eta = 0.01, weight = c(3, 1), maxdepth = 4, subsample = 0.5, colsample = 0.4) {
-  temp = x
-  temp_train = temp %>%
-    filter(tt == "train") %>%
-    select(-id, -tt)
-  temp_test = temp %>%
-    filter(tt == "test") %>%
-    select(-id, -tt)
-  test_ids = temp %>%
-    filter(tt == "test") %>%
-    .$id
-  temp_train_weights = temp_train %>%
-    mutate_(weight = if_else(project_is_approved == 0, weight[1], weight[2])) %>%
-    .$weight
-
-  train_xgb = xgb.DMatrix(data = temp_train %>% select(-project_is_approved,) %>% data.matrix,
-                          label = as.numeric(temp_train$project_is_approved))
-  test_xgb = xgb.DMatrix(data = temp_test %>% select(-project_is_approved) %>% data.matrix)
+xgb_model_fn = function(train, test, response = "dep", test_ids,
+                        nround = 500,
+                        params = list(eta = 0.01,
+                                      maxdepth = 7,
+                                      subsample = 0.65,
+                                      colsample = 0.7),
+                        evalmetric_fn = c("auc", "rmse", "mlogloss"),
+                        objective_fn = c("binary:logistic", "reg:linear", "multi:softprob"),
+                        printevery_n = 50) {
+  
+  # uncomment in case if you are doing classification and need custom weights to balance classes
+  # weights = response %>%
+  #   data.frame %>% set_colnames("response") %>%
+  #   mutate(weight = if_else(response == 0, 3, 1)) %>%
+  #   .$weight
+  
+  train_xgb = xgb.DMatrix(data = train %>% as.matrix,
+                          label = response %>% as.numeric)
+  test_xgb = xgb.DMatrix(data = test %>% as.matrix)
 
   xgb_model = xgb.train(data = train_xgb,
                         nrounds = nround,
-                        print_every_n = 50,
+                        print_every_n = printevery_n,
                         verbose = 1,
-                        eta = eta,
-                        max_depth = maxdepth,
-                        objective = "binary:logistic",
-                        eval_metric = "auc",
-                        subsample = subsample,
-                        colsample_bytree = colsample,
-                        base_score = 0.49,
-                        weight = temp_train_weights,
-                        verbose = T)
+                        objective = objective_fn,
+                        eval_metric = evalmetric_fn,
+                        # base_score = 0.5, # applicable only for classification
+                        # weight = weights, # applicable if need to balance classes for classification
+                        verbose = T,
+                        params = params)
   xgboost::xgb.save(xgb_model, fname = 'xgb_model')
 
-  output = data.frame(id = test_ids, project_is_approved = as.numeric(predict(xgb_model, test_xgb))) %>%
-    mutate(project_is_approved = if_else(project_is_approved > 0.99, 1,
-                                         if_else(project_is_approved < 0.01, 0, project_is_approved)))
+  output = data.frame(id = test_ids, response = as.numeric(predict(xgb_model, test_xgb)))
   assign("output", value = output, envir = .GlobalEnv)
   fwrite(output, 'output.csv')
 
@@ -103,7 +102,7 @@ xgb_importance_fn_2 = function(xgbmodel, train, response = "dep", id = "id", n =
 # provide ranges for parameters if required (defaults provided), needs what acquisition method to be used for the bayesian segment
 # takes xgb.Dmatrix objects as input for simplicity (modify if only dataframe can be provided, not recommended)
 xgb_opt_custom = function(train_df, test_df, test_label, objectfun,
-                          evalmetric, eta_range = c(0.001, 0.5), max_depth_range = c(4, 8L), nrounds_range = c(50, 160L), subsample_range = c(0.1, 1L), bytree_range = c(0.4, 1L), init_points = 5, n_iter = 10, acq = c("ucb", "ei"), kappa = 2.576, eps = 0, optkernel = list(type = "exponential", power = 2), classes = NULL) {
+                          evalmetric, eta_range = c(0.001, 0.2), max_depth_range = c(4L, 12L), nrounds_range = c(100L, 1000L), subsample_range = c(0.5, 0.9L), bytree_range = c(0.4, 0.8L), init_points = 20, n_iter = 10, acq = c("ucb", "ei", "poi"), kappa = 2.576, eps = 0, optkernel = list(type = "exponential", power = 2), classes = NULL) {
   dtrain <- train_df
   dtest <- test_df
   if (grepl("logi", objectfun) == TRUE) {
@@ -190,27 +189,30 @@ xgb_opt_custom = function(train_df, test_df, test_label, objectfun,
 
 ### function to do n-fold cv xgboost ###
 # used for parameter tuning with grid/random search without a train/test split but based off on n-fold cv results
-# define folds, hardcoded here for multi-class classification. subtle changes required to generalize
-# n-fold cv with random search on parameters
-nfold_xgb_fn = function(train_xgb, response, folds = 5, maximize = TRUE, evalmetric = "mlogloss", n = 20) {
+# define folds, default set here for classification. subtle changes required to generalize
+# n-fold cv with random search on parameters (some default sensible ranges given)
+nfold_xgb_fn = function(train_xgb, response, folds = 5, maximize = TRUE,
+                        evalmetric = c("auc", "mlogloss", "rmse"), 
+                        objective_fn = c("binary:logistic", "multi:softprob", "reg:linear"),
+                        n = 20) {
   best_param = list()
   best_seednumber = 1234
   best_score = Inf
   best_score_index = 0
 
   for (iter in 1:n) {
-    param = list(objective = "multi:softprob",
+    param = list(objective = objective_fn,
                  eval_metric = evalmetric,
                  num_class = length(unique(response[, 1])),
-                 max_depth = sample(5:15, 1),
-                 eta = runif(1, .01, .2),
+                 max_depth = sample(5:12, 1),
+                 eta = runif(1, .001, .2),
                  gamma = runif(1, 0.0, 0.2),
-                 subsample = runif(1, .7, .9),
-                 colsample_bytree = runif(1, .5, .7),
+                 subsample = runif(1, .6, .9),
+                 colsample_bytree = runif(1, .5, .8),
                  min_child_weight = sample(1:10, 1),
                  max_delta_step = sample(1:10, 1)
     )
-    cv.nround = sample(seq.int(100, 500, 100), 1)
+    cv.nround = sample(seq.int(100, 1000, 100), 1)
     cv.nfold = folds
     seed.number = sample.int(10000, 1)[[1]]
     set.seed(seed.number)

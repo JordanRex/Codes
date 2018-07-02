@@ -37,6 +37,7 @@
       
       suppressMessages(
         {
+          packages("readr")
           # packages("xgboost")
           # packages("stringr")
           # packages("qdapTools")
