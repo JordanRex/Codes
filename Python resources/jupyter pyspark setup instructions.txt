@@ -1,0 +1,38 @@
+## instructions to setup and use Docker with the jupyter/pyspark-notebook image
+
+1. Download and install the Docker community edition version
+	- https://store.docker.com/editions/community/docker-ce-desktop-windows
+2. Enable virtualization in Windows
+	- https://support.lenovo.com/in/en/solutions/ht500216
+	- follow steps above to enable it the recommended way
+3. Open Docker and restart to enable the changes
+4. Open a windows terminal (admin mode) and type the below command
+	- docker pull jupyter/pyspark-notebook
+5. It will take a while to download and set it up (around 6gb)
+6. When done, close and open a new terminal and type below command
+	- docker run -p 8888:8888 jupyter/pyspark-notebook
+	- the above command means
+		- [docker (keyword to specify it is a docker command)] [run (run command)] [-p (publish command)] [8888 (host post) : 8888 (container port)] [jupyter/pyspark-notebook (image name)]
+7. This will create a container from the specified image, and start a session on localhost:8888 that can communicate with the 8888 port of the container
+	- open your browser and go to localhost:8888/?token="key"
+	- the link is automatically displayed in the terminal once the container is running
+8. Create a new jupyter notebook and execute the below statements
+	- import pyspark
+	- sc = pyspark.SparkContext('local[*]')
+	- # do something to prove it works
+	- rdd = sc.parallelize(range(1000))
+	- rdd.takeSample(False, 5)
+9. If it returns an output, everything is working fine
+10. Keep in mind this is for setting up a temporary container in memory and not for production. You will need to create a folder elsewhere in your drive and add it to the container repository to retain work done during the session (refer to below link for instructions on that)
+	- https://www.dataquest.io/blog/docker-data-science/
+
+
+Notes:
+1. You need to stop/remove containers when shutting down to avoid sharing memory when not using it
+2. For that, create a "docker remove all.bat" textfile with the below contents
+	@ECHO OFF
+	FOR /f "tokens=*" %%i IN ('docker ps -aq') DO docker stop %%i
+3. This will remove all existing containers. You can also simply "stop" a container using its id if you want to retain it
+	- docker stop [container id]
+	- container id can be acquired by typing "docker ps" in the terminal
+4. You can display the downloaded images by executing "docker images"

@@ -1,0 +1,12 @@
+## instructions to setup a virtualenv using pipenv and open a jupyter notebook with the created kernel
+
+1. Install pipenv
+	- python -m pip install pipenv
+2. Activate the virtualenv
+	- pipenv install
+	- this will setup the pipfile and activate the virtualenv
+	- execute "pipenv shell" to open up a sub shell of the virtualenv created
+3. Install packages using --skip-lock argument since piplock takes too much time
+	- pipenv install --skip-lock jupyter
+	- then execute > ipython kernel install --name=project1 (project1 = name of project/kernel you want to use)
+	- then execute > jupyter notebook (it starts with default python kernel from the virtual env)
