@@ -10,3 +10,4 @@
 	- pipenv install --skip-lock jupyter
 	- then execute > ipython kernel install --name=project1 (project1 = name of project/kernel you want to use)
 	- then execute > jupyter notebook (it starts with default python kernel from the virtual env)
+	- dynamic code for the same is "python -m ipykernel install --user --name=`basename $VIRTUAL_ENV`"
