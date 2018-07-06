@@ -31,7 +31,12 @@
 
 Notes:
 1. You need to stop/remove containers when shutting down to avoid sharing memory when not using it
-2. For that, create a "docker remove all.bat" textfile with the below contents
+	- manual method is execute the below steps:
+		- docker ps (will return the running/stopped containers)
+		- get the container id of the one you want to stop
+		- docker stop [container id]
+		- docker rm [container id]
+2. To close All the running/stopped containers, create a "docker remove all.bat" textfile with the below contents
 	@ECHO OFF
 	FOR /f "tokens=*" %%i IN ('docker ps -aq') DO docker stop %%i
 3. This will remove all existing containers. You can also simply "stop" a container using its id if you want to retain it
