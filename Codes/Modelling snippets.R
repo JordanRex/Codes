@@ -44,7 +44,6 @@ xgb_model_fn = function(train, test, response = "dep", test_ids,
                         eval_metric = evalmetric_fn,
                         # base_score = 0.5, # applicable only for classification
                         # weight = weights, # applicable if need to balance classes for classification
-                        verbose = T,
                         params = params)
   xgboost::xgb.save(xgb_model, fname = 'xgb_model')
 
