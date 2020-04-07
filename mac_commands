@@ -1,0 +1,6 @@
+1. Get # of cores -> sysctl hw.physicalcpu hw.logicalcpu
+2. Delete all Ds_Store files -> sudo find / -name .DS_Store -delete; killall Finder
+3. Ping a site -> ping www.google.com
+4. Display hidden files in Finder -> defaults write com.apple.finder AppleShowAllFiles -bool TRUE; killall Finder
+5. Not sleep for t seconds -> caffeinate -t 150000
+6. 
