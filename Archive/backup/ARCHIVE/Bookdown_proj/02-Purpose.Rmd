@@ -1,0 +1,18 @@
+---
+title: "Purpose"
+author: "Varun V"
+date: "23 October 2018"
+output: html_document
+---
+
+# **Purpose** {-}
+- To ensure seamless transition of the entire pipeline to another entity
+- Complete technical documentation of the entire Turnover process from scratch to final adoption/health monitoring
+- Complete manual processes documentation involved in the pipeline
+- To create modules that can be scaled/leveraged across the organization in other problems
+- To ensure a viable consumption pipeline that maximizes the ROI potential of the whole process
+    - The generic process flow across the various individual modules
+    - Perspective:
+        - **Level** - Actionable steps
+        - **Order** - Chronological order along the time and implementation dimensions (Linear. No parallelizable steps)
+        - **Audience** - Primarily intended for a Data Scientist (few existing steps will be translated to a Data Engineer/BI developer)

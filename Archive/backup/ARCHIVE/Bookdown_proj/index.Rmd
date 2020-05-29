@@ -1,0 +1,33 @@
+---
+title: "Turnover Handover Documentation"
+author: "Varun V"
+date: "Oct 2018"
+site: bookdown::bookdown_site
+output:
+  bookdown::gitbook: default
+always_allow_html: yes
+---
+
+```{r include = FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+# GLOBAL TURNOVER ASSET {-}
+- **Team:** *People Analytics*
+- **Location:** *GCC*
+- **Description:** *Transition Documentation for GCC handover*
+
+# **Environment** {-}
+1. **OS** - Windows 10
+2. **Python** - Anaconda version 3.6.5
+3. **Packages** - *Described in the requirements file of the project (requirements.txt in the project dir)*
+4. **Deployed Location** - Azure VM; with data in Azure Datalake and production running on an Azure Databricks cluster
+5. **Structure** - Five python notebooks
+    1. Data Preparation
+        1. Raw_ADS_preparation.ipynb
+        2. Final_ADS_preparation.ipynb
+    2. Modelling FW
+        1. Turnover_modelling_FW.ipynb
+    3. Prediction and Factor analysis
+        1. Predict.ipynb
+        2. Factor_analysis.ipynb

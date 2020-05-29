@@ -1,0 +1,26 @@
+---
+title: "04-Consumption Guidelines"
+author: "Varun V"
+date: "31 October 2018"
+output: html_document
+---
+
+# **Consumption Guidelines**
+  1. Click (Stay Interviews) - this phase details out the steps to be taken once the final prediction dataset with the macro factors mapped is generated
+    1. Steps
+      1. Take the final predictions flatfile with the macro factors mapped out
+      2. Perform the PBP mapping (manual for now, will be automated later down the line)
+        - Steps for the same are:
+          1. ...
+          2. ...
+      3. Create the final output file and export it into the Azure SQL Db
+  2. Feedback Module
+    1. Adoption Module
+      1. Trends/Insights Generation (High level stakeholder dashboard)
+      2. Feedback Incorporation
+      3. Benefit/ROI calculator
+    2. Health Module
+      1. Data Pollution Module
+      2. Model retrain/refresh cadence determiner
+      
+**__in progress__**
