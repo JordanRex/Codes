@@ -20,25 +20,10 @@ def quick_model_xgb(train, ytrain,
     train.drop(['global_id', 'year'], inplace=True, axis=1)
 
     # encoding and other preprocessing
-    #cat_columns = train.select_dtypes(include=['object']).columns.values
-    if {'opr_prev', 'opr_prev_prev'}.issubset(train.columns) :
-        cat_columns = ['zone', 'function', 'opr_prev', 'opr_prev_prev', 'ebm_level']
-    else :
-        cat_columns = ['zone', 'function', 'ebm_level']
+    cat_columns = train.select_dtypes(include=['object']).columns.values
+
     # convert some object columns to numeric
-    train = cust_funcs.force_numeric(train, cols=['engagement_score', 'manager_effectiveness_score',
-        'mr_pers_compgroup_year_comp_score_mean_functional_competencies',
-       'mr_pers_compgroup_year_comp_score_mean_leadership_competencies',
-       'mr_pers_compgroupl1_year_comp_score_mean_leadership_competencies_develop_people',
-       'mr_pers_compgroupl1_year_comp_score_mean_leadership_competencies_dream_big',
-       'mr_pers_compgroupl1_year_comp_score_mean_leadership_competencies_live_our_culture',
-       'net_target', 'teamsize', 'teamsize_delta', 'index_average',
-       'position_velocity', 'emp_time_in_band1', 'count_of_belts',
-       'talentpool_renomination', 'talentpool', 'engagement_score',
-       'manager_effectiveness_score', 'fs_prom', 'fs_ho', 'fs_adherant_perc',
-       'fs_to_overall', 'dr_prom', 'dr_ho', 'dr_adherant_perc',
-       'dr_to_overall', 'mean_team_tenure', 'lc_count', 'fc_count',
-       'position_tenure', 'target_delta'])
+    train = cust_funcs.force_numeric(train, cols=['engagement_score', 'manager_effectiveness_score'])
 
     ## for categorical
     ### split

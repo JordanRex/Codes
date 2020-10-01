@@ -1,7 +1,5 @@
 # some kaggle feature exploration codes
 
-
-
 # remove duplicate columns
 remDupcols <- function(data){
   rem = which(!(names(data) %in% colnames(unique(as.matrix(data), MARGIN=2))))

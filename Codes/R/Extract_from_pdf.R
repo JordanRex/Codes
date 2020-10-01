@@ -2,13 +2,10 @@
 
 
 # Snippet for extracting info from the pdfs
-
-{
 install.packages("tesseract")
 install.packages("pdftables")
 ghit::install_github(c("leeper/tabulizerjars", "leeper/tabulizer"), INSTALL_opts = "--no-multiarch", dependencies = c("Depends", "Imports"))
 
-{
 # Here are a few methods for getting text from PDF files. Do read through
 # the instructions carefully! Note that this code is written for Windows 7,
 # slight adjustments may be needed for other OSs
@@ -146,7 +143,6 @@ lapply(1:length(abstracts),  function(i) write.table(abstracts[i], file=paste(my
 # And now you're ready to do some text mining on the txt
 
 # originally on http://stackoverflow.com/a/21449040/1036500
-}
 
 library(tabulizer)
 # library(dplyr)
@@ -161,150 +157,3 @@ convert_pdf(input_file = '*.pdf', output_file = 'out.xlsx', format = 'xlsx-multi
 
 # cmd lines
 # apt-get install libcurl4-openssl-dev
-}
-
-# Reading in the data, cleaning, appending to the other file, exporting the final file with the required columns
-{
-
-# table
-{
-table_1 = data.frame(read_excel(path = "C:/Users/varun.v1/Documents/R/CDOT/out.xlsx", sheet = 1, skip = 2, col_names = T))
-table_2 = data.frame(read_excel(path = "C:/Users/varun.v1/Documents/R/CDOT/out.xlsx", sheet = 2, skip = 2, col_names = T))
-table_3 = data.frame(read_excel(path = "C:/Users/varun.v1/Documents/R/CDOT/out.xlsx", sheet = 3, skip = 2, col_names = T))
-table_4 = data.frame(read_excel(path = "C:/Users/varun.v1/Documents/R/CDOT/out.xlsx", sheet = 4, skip = 2, col_names = T))
-
-table_1[is.na(table_1)] <- ""
-table_2[is.na(table_2)] <- ""
-table_3[is.na(table_3)] <- ""
-table_4[is.na(table_4)] <- ""
-
-table_1$STIP.WBS.ID.Description = paste(table_1$STIP.WBS.ID.Description, table_1$NA., sep = " ")
-table_1 = table_1[1:77,c(1:5,7:10)]
-table_2 = table_2[1:70,]
-table_3$STIP.Description = paste(table_3$STIP.Description, table_3$NA., table_3$NA..1, sep = " ")
-table_3$STIP.WBS.ID.Description = paste(table_3$STIP.WBS.ID.Description, table_3$NA..2, sep = " ")
-table_3 = table_3[1:71, c(1:3,6:7,9:12)]
-table_4 = table_4[1:24,c(1:5,7:10)]
-
-table = rbind(table_1, table_2, table_3, table_4)
-
-table = table %>%
-  mutate(Funding.Program = "") %>%
-  mutate(Fund.Source = "") %>%
-  mutate(Fund.Type = "") %>%
-  mutate(STIP.Phase = "") %>%
-  mutate(X2017 = "") %>%
-  mutate(X2018 = "") %>%
-  mutate(X2019 = "") %>%
-  mutate(X2020 = "") %>%
-  mutate(Future = "")
-}
-
-# tabble
-{
-tabble = read.csv('data.csv', header = T, as.is = T, na.strings = "")
-
-library(zoo)
-tabble = na.locf(tabble, na.rm = F)
-
-tabble = tabble %>%
-  mutate(FY16...FY19.STIP.Amount = "") %>%
-  mutate(FY16...FY19.Budgeted.Amount = "") %>%
-  mutate(FY2020.STIP.Amount = "") %>%
-  mutate(Status = "")
-}
-
-library(data.table)
-
-setnames(table, old = c("STIP.Description"), new = c("STIP.ID.Description"))
-setnames(tabble, old = c("STIP.WBS.Description"), new = c("STIP.WBS.ID.Description"))
-
-main_table = bind_rows(table,tabble)
-
-Fund.table = main_table %>%
-  select(STIP.WBS.ID.Description, Funding.Program, Fund.Type, Fund.Source) %>%
-  unique()
-
-main_table = main_table %>%
-  select(-Funding.Program, -Fund.Source, -Fund.Type) %>%
-  unique() %>%
-  mutate(Status = if_else(Status == "", "Not Completed", Status)) %>%
-  mutate(Perc.Completion = if_else(Status == "Not Completed", sample(c(0,25,50,75,90), n(),
-                    replace = TRUE, prob = c(0.7,0.05,0.05,0.1,0.1)), 0)) %>%
-  # break
-  mutate(ROI.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Monetary.Benefit.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(CDOT.Savings.Year = sample(10000:999999, n(), replace = TRUE)) %>%
-  mutate(User.Savings.Year = sample(10000:999999, n(), replace = TRUE)) %>%
-  mutate(Non.Monetary.Benefit.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Jobs.Created = sample(100:9999, n(), replace = TRUE)) %>%
-  mutate(Job.Accessibility = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.3, 0.7))) %>%
-  mutate(Freight.Improvement = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.05, 0.95))) %>%
-  mutate(Environment.Improvement = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.1, 0.9))) %>%
-  mutate(Aesthetics.Improvement = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.08, 0.92))) %>%
-  mutate(Tourism.Flag = if_else(Aesthetics.Improvement == "Yes",
-                                sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.6, 0.4)), "No")) %>%
-  # break
-  mutate(Multi.Modal.Project = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.05, 0.95))) %>%
-  mutate(Modes.Concerned = if_else(Multi.Modal.Project == "Yes",
-                                   sample(c(2,3,4,5), n(), replace = TRUE, prob = c(0.5,0.3,0.15,0.05)), 1)) %>%
-  mutate(Mode.Transportation = "") %>%
-  # break
-  mutate(Risk.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Technical.Risk.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Management.Risk.Index = sample(1:10, n(), replace = TRUE)) %>%
-  # break
-  mutate(Impact.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Environmental.Impact.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Social.Impact.Index = sample(1:10, n(), replace = TRUE)) %>%
-  # break
-  mutate(Effort.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Right.Of.Way.Flag = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.3, 0.7))) %>%
-  mutate(Time.Completion = sample(1:5, n(), replace = TRUE, prob = c(0.3,0.2,0.2,0.2,0.1))) %>%
-  mutate(Manpower = sample(c("High","Medium","Low"), n(), replace = TRUE, prob = c(0.2,0.5,0.3))) %>%
-  mutate(InterAgency.Collaboration.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Agencies.Involved = sample(2:15, n(), replace = TRUE)) %>%
-  mutate(Federal.Agencies = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.05, 0.95))) %>%
-  mutate(Vendors = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.02, 0.98))) %>%
-  # break
-  mutate(Performance.Measures.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Safety.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Mobility.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Livability.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(PTI.Improvement.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Infrastructure.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Maintenance.LOS.Index = sample(1:10, n(), replace = TRUE)) %>%
-  # break
-  mutate(Emergency.Flag = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.03, 0.97))) %>%
-  mutate(Compliance = sample(c("High","Medium","Low"), n(), replace = TRUE, prob = c(0.2,0.5,0.3))) %>%
-  mutate(Project.Complexity.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Ease.Of.Construction = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.05, 0.95))) %>%
-  mutate(Ease.Of.Funding = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.05, 0.95))) %>%
-  mutate(Ease.Of.Design = sample(c("Yes","No"), n(), replace = TRUE, prob = c(0.05, 0.95))) %>%
-  # break
-  mutate(Concerned.Goal = sample(c("Safety","Mobility","Maintaining the system","Economic Vitality"), n(),
-                               replace = TRUE, prob = c(0.2, 0.2, 0.5, 0.1)))
-
-main_table_1 = main_table %>%
-  select(CDOT.Region) %>%
-  unique() %>%
-  mutate(Region.Priority.Index = sample(1:10, n(), replace = TRUE)) %>%
-  mutate(Population = sample(10000:50000, n(), replace = TRUE)) %>%
-  mutate(Area.Covered = sample(10000:50000, n(), replace = TRUE)) %>%
-  mutate(Geographical.Feasibility.Index = sample(1:10, n(), replace = TRUE))
-  # break
-
-main_table = inner_join(main_table, main_table_1)
-
-main_table = main_table %>%
-  mutate(Priority.Score = (ROI.Index/Effort.Index)*10 + Impact.Index + Risk.Index
-         + Performance.Measures.Index + if_else(Emergency.Flag == "Yes", 5, 0)
-         + if_else(Compliance == "High", 3, if_else(Compliance == "Medium", 2, 1))
-         + (Project.Complexity.Index/5) + (Region.Priority.Index/2))
-
-
-main_table = inner_join(main_table, Fund.table)
-}
-
-# Export the table
-write.csv(main_table, "CDOT_Prioritization_Framework.csv", row.names = F)
